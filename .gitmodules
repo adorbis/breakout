@@ -1,0 +1,3 @@
+[submodule "references/upstream/openalgo-desktop"]
+	path = references/upstream/openalgo-desktop
+	url = https://github.com/marketcalls/openalgo-desktop.git
