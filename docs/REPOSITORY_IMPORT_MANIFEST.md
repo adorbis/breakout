@@ -85,6 +85,18 @@ Relevant upstream documentation is available inside the submodule:
 
 The API integration summary and Release 1 allowlist are in [OPENALGO_INTEGRATION_REFERENCE.md](OPENALGO_INTEGRATION_REFERENCE.md).
 
+## Registered integration candidates (not imported)
+
+These are recorded for provenance and pinning only. No files are copied into this repository, and there's no submodule, clone or installed package.
+
+| Source | Category | Revision pinned | Licence observed | Status |
+|---|---|---|---|---|
+| [blackrock/aladdinsdk](https://github.com/blackrock/aladdinsdk) | Institutional Data and API Integration SDK (Research and Institutional Intelligence) | `c1c9f3c2a0a37f8bafce8b27a851f32223bbf305` (`main`; untagged, 2 commits after `2.0.0-beta10`) | Apache-2.0 (root `LICENSE`; source headers say `Copyright 2024 BlackRock, Inc.`; **no NOTICE file** at the pin) | **CONDITIONAL.** Access and entitlements not confirmed |
+
+AladdinSDK is not a skill repository, an LLM, a broker gateway or a Breakout application. It's a Python (`>=3.9`) SDK. Any future use goes through a separate Python Institutional Data Adapter service with its own environment, and never into the Node backend or frontend. `asdk_plugin_trading` is excluded from Release 1. Provenance, capabilities, prerequisites and safety constraints are in [integrations/BLACKROCK_ALADDINSDK.md](integrations/BLACKROCK_ALADDINSDK.md).
+
+Verification (2026-11-01, read-only via the GitHub and PyPI APIs): the pinned commit exists and was identical to `main`. The latest PyPI release is `aladdinsdk 2.0.0b10` (beta). Don't follow `main` or change the pin without updating this manifest and getting owner approval.
+
 ## Required handling rules
 
 1. All imported code is reference-only. It has not been integrated into Breakout runtime modules.

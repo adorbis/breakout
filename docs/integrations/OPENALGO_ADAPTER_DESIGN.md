@@ -1,0 +1,43 @@
+# Design: Breakout Integration Adapter (OpenAlgo read-only facade)
+
+**Status:** DESIGN for review. Not implemented. No network changes. The Copilot's OpenAlgo tools stay DISABLED until this adapter is built, reviewed and approved for network attachment.
+
+## Problem
+
+An OpenAlgo API key is per user and unscoped (`database/auth_db.py: verify_api_key`). Any key that can read quotes or funds can also place, modify and cancel orders. The adapter's allowlist is therefore a **compensating control**, not a true credential scope. That makes keeping the key isolated the main protection.
+
+## Shape
+
+```
+copilot ──(breakout_integration network, mTLS or HMAC)──▶ adapter ──(approved OpenAlgo network)──▶ OpenAlgo /api/v1
+```
+
+- **Service:** a separate `adapter` service in the `breakout` Compose project. It's the only dual-homed Breakout container. It joins the new internal `breakout_integration` network, and joins the OpenAlgo network only after a separate approval.
+- **Credentials:** the adapter alone holds `OPENALGO_API_KEY`, in its own env file. The Copilot never holds it, and neither the model nor the browser ever sees it.
+- **Codebase:** a small, separate codebase (`adapter/`) with its own tests and no dependency on the Copilot's code.
+
+## Interface (fixed, versioned, no generic forwarding)
+
+| Adapter route | OpenAlgo call | Notes |
+|---|---|---|
+| `POST /v1/quote` `{exchange, symbol}` | `POST /api/v1/quotes` | Exchange must be in `VALID_EXCHANGES`; symbol checked against the instrument master |
+| `POST /v1/depth` `{exchange, symbol}` | `POST /api/v1/depth` | Optional; enable only if needed |
+| `POST /v1/funds` `{}` | `POST /api/v1/funds` | Account-level; per-user authorisation in Breakout |
+
+- **Hard-coded routes:** the OpenAlgo method and path are fixed per adapter route. There is no URL, path or method parameter.
+- **Unreachable order routes:** `placeorder`, `placesmartorder`, `modifyorder`, `cancelorder`, `cancelallorder`, `closeposition`, `basketorder`, `splitorder` and `optionsorder` don't exist in the code at all. A test asserts that the adapter's outbound path set is exactly the allowlist.
+- **Validated responses:** responses are checked against fixed schemas, cut down to whitelisted fields, size-bounded, and stamped with `as_of` and `source: "openalgo"`.
+
+## Controls
+
+- **Auth to the adapter:** an HMAC-signed request carrying timestamp, nonce and body hash, using a key shared only between copilot and adapter, with a 30 s skew window. Alternatively, mTLS on the internal network.
+- **Per-user authorisation:** Breakout passes the user ID, and the adapter checks it against its own allowlist of users permitted to read account data.
+- **Limits:** a 3 s timeout per call, no retries on POST, and per-route rate limits.
+- **Audit logs:** user, route, instrument, status and latency. Never keys or account balances.
+- **Instrument master readiness:** the adapter refuses quotes until OpenAlgo's master contract download for the trading day is confirmed. The exact readiness signal still needs to be verified against the deployed version.
+
+## Open items before implementation
+
+1. Which network path OpenAlgo exposes privately. Today it is reachable only on the host loopback interface.
+2. Whether a dedicated OpenAlgo user and key can be created for Breakout, so revoking it doesn't affect TradeOS.
+3. Market-data entitlement and broker session timing (the 09:15 IST auth prerequisite).

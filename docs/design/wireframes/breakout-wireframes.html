@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Breakout Wireframes</title>
+<!-- Design-review document only. Production Breakout self-hosts fonts (CSP default-src 'self'). -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Plus+Jakarta+Sans:wght@600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --white:#FFFFFF; --silver:#E8EDF2; --cyan:#40E0E0; --blue:#008BE0;
+    --ink:#0B1B2B; --ink-muted:#5B6B7C; --blue-700:#006FB3; --line:#D3DBE3;
+    --up:#0F7A4D; --down:#B42318; --warn:#8A5A00; --warn-bg:#FFF4DC; --authority-bg:#F3F8FC;
+    --head:"Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+    --body:Inter, ui-sans-serif, system-ui, sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--silver); color:var(--ink); font:14px/20px var(--body); }
+  h1,h2,h3 { font-family:var(--head); margin:0; }
+  .page { padding:24px 16px 48px; max-width:1500px; margin:0 auto; }
+  .doc-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:8px 16px; margin-bottom:16px; }
+  .doc-head h1 { font-size:22px; }
+  .concept { font:600 12px/16px var(--body); color:var(--warn); background:var(--warn-bg); padding:4px 10px; border-radius:999px; }
+  .legend { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 20px; font-size:12px; color:var(--ink-muted); }
+  .frame-label { font:600 13px/18px var(--head); margin:28px 0 8px; }
+
+  /* status chips */
+  .st { display:inline-flex; align-items:center; gap:5px; font:500 11px/16px var(--body); padding:1px 8px; border-radius:999px; border:1px solid var(--line); background:var(--white); color:var(--ink-muted); white-space:nowrap; }
+  .st::before { content:""; width:7px; height:7px; border-radius:50%; border:1.5px solid currentColor; }
+  .st.working { color:var(--up); } .st.working::before { background:var(--up); border-color:var(--up); }
+  .st.disabled::before { background:transparent; }
+  .st.proposed { border-style:dashed; } .st.proposed::before { display:none; }
+  .st.unavailable { text-decoration:line-through; } .st.unavailable::before { display:none; }
+
+  /* desktop frame */
+  .desk { width:1440px; max-width:100%; background:var(--white); border:1px solid var(--line); border-radius:12px; overflow:hidden; box-shadow:0 1px 2px rgb(11 27 43 / 8%); position:relative; }
+  .watermark { position:absolute; inset:auto 12px 10px auto; font:700 11px/1 var(--head); letter-spacing:.12em; color:var(--warn); opacity:.85; pointer-events:none; }
+  .shell { display:flex; align-items:center; gap:16px; padding:10px 16px; border-bottom:1px solid var(--line); }
+  .brand { font:700 16px/1 var(--head); display:flex; align-items:center; gap:8px; letter-spacing:.04em; }
+  .brand i { width:18px; height:18px; border-radius:4px; background:linear-gradient(135deg,var(--cyan),var(--blue)); display:inline-block; }
+  .switcher { border:1px solid var(--line); border-radius:6px; padding:6px 10px; min-width:220px; display:flex; justify-content:space-between; font-weight:600; }
+  .switcher kbd { font:500 11px var(--body); color:var(--ink-muted); border:1px solid var(--line); border-radius:4px; padding:0 5px; }
+  .session { font-size:12px; color:var(--ink-muted); line-height:16px; }
+  .session b { color:var(--ink); }
+  .conn { margin-left:auto; display:flex; gap:6px; }
+  .grid { display:grid; grid-template-columns:72px 1fr 380px; min-height:720px; }
+  .nav { border-right:1px solid var(--line); padding:12px 0; display:flex; flex-direction:column; gap:4px; background:var(--white); }
+  .nav a { display:flex; flex-direction:column; align-items:center; gap:4px; font-size:11px; color:var(--ink-muted); text-decoration:none; padding:10px 0; border-left:3px solid transparent; }
+  .nav a .ico { width:20px; height:20px; border-radius:5px; border:1.5px solid currentColor; }
+  .nav a.on { color:var(--ink); border-left-color:var(--cyan); font-weight:600; }
+  .work { background:var(--silver); padding:12px; display:grid; gap:12px; grid-template-columns:1.35fr 1fr; grid-template-rows:auto 1fr auto; align-content:start; }
+  .panel { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .panel h3 { font-size:14px; line-height:20px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .prov { font-size:11px; line-height:16px; color:var(--ink-muted); margin-top:8px; }
+  .hdr { grid-column:1 / -1; display:flex; align-items:baseline; gap:24px; flex-wrap:wrap; }
+  .hdr .sym { font:700 20px/28px var(--head); }
+  .hdr .px { font:600 20px/28px var(--body); font-feature-settings:"tnum"; }
+  .muted { color:var(--ink-muted); }
+  .authority { background:var(--authority-bg); border-left:4px solid var(--blue); }
+  .kv { display:grid; grid-template-columns:120px 1fr; gap:6px 12px; margin-top:10px; font-feature-settings:"tnum"; }
+  .kv dt { color:var(--ink-muted); } .kv dd { margin:0; font-weight:600; }
+  .note { margin-top:10px; padding:8px 10px; border-radius:6px; background:var(--white); border:1px solid var(--line); font-size:12px; color:var(--ink-muted); }
+  .linkish { color:var(--blue-700); font-weight:600; font-size:13px; margin-top:10px; display:inline-block; }
+  .side { display:grid; gap:12px; align-content:start; }
+  .evidence { grid-column:1 / -1; }
+  .evidence ul { margin:8px 0 0; padding:0; list-style:none; display:grid; gap:6px; }
+  .evidence li { display:flex; justify-content:space-between; gap:8px; font-size:13px; }
+
+  /* copilot */
+  .copilot { border-left:1px solid var(--line); display:flex; flex-direction:column; background:var(--white); }
+  .cp-head { padding:10px 14px; border-bottom:1px solid var(--line); display:grid; gap:6px; }
+  .cp-title { display:flex; justify-content:space-between; font:700 14px/20px var(--head); }
+  .cp-title span:first-child::before { content:"◆ "; color:var(--cyan); }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { font:500 11px/16px var(--body); padding:2px 8px; border-radius:999px; background:var(--silver); color:var(--ink); }
+  .chip.ctx { background:var(--cyan); }
+  .model { font-size:12px; color:var(--ink-muted); display:flex; justify-content:space-between; }
+  .model code { color:var(--ink); }
+  .cp-body { flex:1; padding:14px; display:grid; gap:12px; align-content:start; }
+  .you { justify-self:end; background:var(--silver); padding:8px 12px; border-radius:10px 10px 2px 10px; font-size:13px; }
+  .ai { border:2px dashed var(--cyan); border-radius:10px; padding:10px 12px; font-size:13px; }
+  .ai-label { font:600 11px/16px var(--body); color:var(--ink-muted); margin-bottom:6px; }
+  .bar { height:8px; border-radius:4px; background:var(--silver); margin:6px 0; }
+  .tool { font-size:12px; color:var(--ink-muted); border:1px solid var(--line); border-radius:6px; padding:6px 10px; }
+  .tcard { background:var(--authority-bg); border-left:4px solid var(--blue); border-radius:6px; padding:8px 10px; font-size:12px; }
+  .composer { margin:12px 14px 14px; border:1px solid var(--blue-700); border-radius:10px; padding:10px 12px; display:flex; justify-content:space-between; color:var(--ink-muted); box-shadow:0 0 0 2px rgb(64 224 224 / 45%); }
+  .send { background:var(--cyan); color:var(--ink); font-weight:700; border-radius:6px; padding:2px 12px; }
+  .sugg { padding:0 14px 6px; display:flex; gap:6px; flex-wrap:wrap; }
+  .sugg span { font-size:11px; border:1px solid var(--line); border-radius:999px; padding:2px 8px; color:var(--blue-700); }
+
+  /* mobile frames */
+  .phones { display:flex; flex-wrap:wrap; gap:24px; }
+  .phone { width:390px; max-width:100%; height:844px; background:var(--white); border:1px solid var(--line); border-radius:28px; overflow:hidden; display:flex; flex-direction:column; position:relative; box-shadow:0 1px 2px rgb(11 27 43 / 8%); }
+  .m-bar { padding:14px 16px 10px; border-bottom:1px solid var(--line); }
+  .m-bar .row { display:flex; justify-content:space-between; align-items:center; }
+  .m-sym { font:700 16px/22px var(--head); }
+  .dots { display:flex; gap:5px; } .dots i { width:9px; height:9px; border-radius:50%; border:1.5px solid var(--ink-muted); } .dots i.on { background:var(--up); border-color:var(--up); }
+  .m-body { flex:1; padding:12px; display:grid; gap:10px; align-content:start; background:var(--silver); overflow:hidden; }
+  .m-tabs { display:grid; grid-template-columns:repeat(5,1fr); border-top:1px solid var(--line); background:var(--white); }
+  .m-tabs span { text-align:center; padding:10px 0 14px; font-size:11px; color:var(--ink-muted); }
+  .m-tabs span.on { color:var(--ink); font-weight:700; box-shadow:inset 0 3px 0 var(--cyan); }
+  .m-tabs span.cp { color:var(--ink); } .m-tabs span.cp b { display:block; margin:0 auto 2px; width:28px; height:28px; border-radius:50%; background:var(--cyan); line-height:28px; }
+  .m-entry { background:var(--white); border:1px solid var(--blue-700); border-radius:10px; padding:12px; color:var(--blue-700); font-weight:600; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="doc-head">
+    <h1>Breakout · Workspace wireframes</h1>
+    <span class="concept">CONCEPT — layout only · no live or sample data · values shown as “—”</span>
+  </div>
+  <div class="legend">
+    Integration status:
+    <span class="st working">Working (mock-tested)</span>
+    <span class="st disabled">Not connected (blocked)</span>
+    <span class="st proposed">Planned</span>
+    <span class="st unavailable">Not available</span>
+  </div>
+
+  <div class="frame-label">D1 · Desktop Cockpit · 1440 × 900 · instrument selected, market open</div>
+  <div class="desk">
+    <div class="shell">
+      <div class="brand"><i></i>BREAKOUT</div>
+      <div class="switcher">NSE_INDEX · NIFTY ▾ <kbd>/</kbd></div>
+      <div class="session"><b>OPEN</b> · —:— IST · MIS cut-off 15:10 · F&amp;O 15:25<br>TradeOS frame: — <span class="st disabled">TradeOS · not connected</span></div>
+      <div class="conn">
+        <span class="st disabled">OpenAlgo</span><span class="st disabled">TradeOS</span><span class="st proposed">Research</span><span class="st working">AI gateway (mock)</span>
+      </div>
+    </div>
+    <div class="grid">
+      <nav class="nav">
+        <a class="on"><span class="ico"></span>Cockpit</a><a><span class="ico"></span>Scanner</a><a><span class="ico"></span>Research</a><a><span class="ico"></span>Watchlist</a><a><span class="ico"></span>Journal</a>
+      </nav>
+      <section class="work">
+        <div class="panel hdr">
+          <span class="sym">NIFTY 50</span><span class="muted">NSE_INDEX</span>
+          <span class="px">LTP —</span><span class="muted">Δ — (—%)</span><span class="muted">O — · H — · L —</span>
+          <span style="margin-left:auto" class="st disabled">OpenAlgo quote · adapter not built</span>
+        </div>
+        <div class="panel authority">
+          <h3>TradeOS assessment <span class="st disabled">contract proposed</span></h3>
+          <dl class="kv">
+            <dt>Decision</dt><dd>—</dd><dt>EV / lot</dt><dd>— · gate —</dd><dt>Risk</dt><dd>—</dd>
+            <dt>Data health</dt><dd>—</dd><dt>Confirms if</dt><dd>—</dd><dt>Invalidates if</dt><dd>—</dd>
+          </dl>
+          <div class="note">Not connected. Breakout can’t show the authoritative TradeOS decision yet — it needs an authenticated, read-only assessment interface. Nothing in Breakout is an official TradeOS decision until then.</div>
+          <div class="prov">TradeOS · assessment · as_of — · valid_until —</div>
+          <span class="linkish">Ask Copilot to explain this ▸</span>
+        </div>
+        <div class="side">
+          <div class="panel">
+            <h3>Market context <span class="st disabled">pending contract</span></h3>
+            <dl class="kv"><dt>Thesis</dt><dd>—</dd><dt>Sentiment</dt><dd>— <span class="muted">(context only)</span></dd><dt>VIX · PCR</dt><dd>— · —</dd></dl>
+            <div class="prov">TradeOS · /thesis/today · /market/sentiment</div>
+          </div>
+          <div class="panel">
+            <h3>Key levels · next candle <span class="st disabled">pending contract</span></h3>
+            <dl class="kv"><dt>P(up) / P(down)</dt><dd>— / —</dd><dt>Break above</dt><dd>—</dd><dt>Break below</dt><dd>—</dd></dl>
+            <div class="prov">TradeOS · /analysis/next-candle · probabilities only, no future OHLC</div>
+          </div>
+        </div>
+        <div class="panel evidence">
+          <h3>Evidence for NIFTY today <span class="linkish" style="margin:0">See all ▸</span></h3>
+          <ul>
+            <li><span>News &amp; sentiment — <span class="muted">TradeOS · 15-min cache</span></span><span class="st disabled">not connected</span></li>
+            <li><span>Events · next results — <span class="muted">TradeOS · 6 h cache</span></span><span class="st disabled">not connected</span></li>
+            <li><span>Methodology reference — <span class="muted">Breakout skill registry · MIT</span></span><span class="st proposed">planned</span></li>
+            <li><span>External research — <span class="muted">Collector is a lead-generation tool</span></span><span class="st unavailable">not available</span></li>
+          </ul>
+        </div>
+      </section>
+      <aside class="copilot">
+        <div class="cp-head">
+          <div class="cp-title"><span>Trading Copilot</span><span class="muted">⟲ ☰ ⤢</span></div>
+          <div class="chips"><span class="chip ctx">NSE_INDEX · NIFTY</span><span class="chip">5m</span><span class="chip">Cockpit</span><span class="chip">focus: TradeOS panel ✕</span></div>
+          <div class="model"><span>Model <code>adorbis/quick</code> · not yet verified live</span><span>▾</span></div>
+        </div>
+        <div class="cp-body">
+          <div class="you">Why might TradeOS be waiting here?</div>
+          <div class="ai">
+            <div class="ai-label">AI analysis · not a TradeOS decision · adorbis/quick</div>
+            <div class="bar" style="width:92%"></div><div class="bar" style="width:84%"></div><div class="bar" style="width:60%"></div>
+            <div class="chips" style="margin-top:8px"><span class="chip">source: TradeOS news —:—</span><span class="chip">source: skill · discipline</span></div>
+          </div>
+          <div class="tool">⚙ get_tradeos_assessment · disabled (contract pending)</div>
+          <div class="tcard"><b>TradeOS · assessment</b> · rendered from tool result, never model text · as_of —</div>
+        </div>
+        <div class="sugg"><span>Explain the TradeOS view</span><span>What would invalidate it?</span></div>
+        <div class="composer">Ask about NIFTY… <span class="send">Send</span></div>
+      </aside>
+    </div>
+    <div class="watermark">CONCEPT · NO LIVE DATA</div>
+  </div>
+
+  <div class="frame-label">Mobile · 390 × 844 · M1 Overview · M2 TradeOS · M3 Copilot sheet</div>
+  <div class="phones">
+    <div class="phone">
+      <div class="m-bar"><div class="row"><span class="m-sym">NSE_INDEX · NIFTY ▾</span><span class="dots"><i></i><i></i><i class="on"></i></span></div><div class="session">OPEN · —:— IST · MIS 15:10</div></div>
+      <div class="m-body">
+        <div class="panel"><div class="px" style="font:600 18px var(--body)">LTP —  <span class="muted">Δ — (—%)</span></div><div class="prov">OpenAlgo · not connected</div></div>
+        <div class="panel authority"><h3>TradeOS <span class="st disabled">not connected</span></h3><dl class="kv"><dt>Decision</dt><dd>—</dd></dl><div class="prov">as_of —</div></div>
+        <div class="panel"><h3>Market <span class="st disabled">pending contract</span></h3><div class="prov">Thesis — · VIX —</div></div>
+        <div class="panel"><h3>Latest evidence <span class="muted">▸</span></h3><div class="prov">News · events · methodology</div></div>
+        <div class="m-entry">◆ Ask Copilot about NIFTY</div>
+      </div>
+      <div class="m-tabs"><span class="on">Overview</span><span>TradeOS</span><span class="cp"><b>◆</b>Copilot</span><span>Evidence</span><span>More</span></div>
+      <div class="watermark">CONCEPT</div>
+    </div>
+    <div class="phone">
+      <div class="m-bar"><div class="row"><span class="m-sym">NSE_INDEX · NIFTY ▾</span><span class="dots"><i></i><i></i><i class="on"></i></span></div><div class="session">OPEN · —:— IST · MIS 15:10</div></div>
+      <div class="m-body">
+        <div class="panel authority">
+          <h3>TradeOS assessment</h3>
+          <div class="note">Not connected. Breakout can’t show the authoritative decision yet. Nothing here is an official TradeOS decision.</div>
+          <dl class="kv"><dt>Decision</dt><dd>—</dd><dt>EV / lot</dt><dd>—</dd><dt>Gates</dt><dd>—</dd><dt>Data health</dt><dd>—</dd><dt>Invalidates if</dt><dd>—</dd></dl>
+          <div class="prov">as_of — · valid_until —</div>
+        </div>
+        <div class="panel"><h3>Next candle <span class="st disabled">pending contract</span></h3><div class="prov">P(up) — / P(down) — · no future OHLC</div></div>
+        <div class="m-entry">Explain this with Copilot</div>
+      </div>
+      <div class="m-tabs"><span>Overview</span><span class="on">TradeOS</span><span class="cp"><b>◆</b>Copilot</span><span>Evidence</span><span>More</span></div>
+      <div class="watermark">CONCEPT</div>
+    </div>
+    <div class="phone">
+      <div class="m-bar">
+        <div class="row"><span class="m-sym">✕  Trading Copilot</span><span class="muted">☰ ⟲</span></div>
+        <div class="chips" style="margin-top:8px"><span class="chip ctx">NSE_INDEX · NIFTY</span><span class="chip">5m</span><span class="chip">TradeOS ✕</span></div>
+        <div class="model" style="margin-top:6px"><span><code>adorbis/quick</code> · not yet verified live</span><span>▾</span></div>
+      </div>
+      <div class="m-body" style="background:var(--white)">
+        <div class="you">Why WAIT?</div>
+        <div class="ai"><div class="ai-label">AI analysis · not a TradeOS decision</div><div class="bar" style="width:90%"></div><div class="bar" style="width:70%"></div><div class="chips" style="margin-top:6px"><span class="chip">source</span><span class="chip">source</span></div></div>
+        <div class="st" style="color:var(--warn);border-color:var(--warn)">Interrupted — response incomplete</div>
+      </div>
+      <div class="composer" style="margin:10px 12px 22px">Ask about NIFTY… <span class="send">Send</span></div>
+      <div class="watermark">CONCEPT</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
