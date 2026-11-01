@@ -1,6 +1,6 @@
 # Import Limitations and Validation Status
 
-**Date:** 2026-10-31  
+**Date:** 2026-10-31 (updated 2026-11-01)  
 **Branch:** `feature/breakout-foundation`
 
 ## What is included
@@ -14,13 +14,18 @@
 
 - The complete Claude Trading Skills repository: only selected skills/workflows plus its README, full skill index and licence are copied. The index references skills that are not copied.
 - Claude Trader Memory Core's large storage implementation: the skill documentation and thesis schema are retained; storage code is not imported.
-- Day Trader Skill broker execution and US congressional-disclosure skills.
-- Day Trader Skill compressed binary fixtures where the GitHub file transport returned non-UTF-8 content (including the compressed Time Machine replay fixture and compressed scanner fixture). They remain available in the upstream repository and the pinned source revision.
+- Day Trader Skill broker execution (`trader-broker`) and US congressional-disclosure (`trader-pelosi`) skills, with their tests and fixtures.
+- Day Trader Skill `trader-analyst` skill (AI company-facts analyst) with its test and fixtures; it was not selected in the original import and remains excluded (documented 2026-11-01).
+- Day Trader Skill plugin packaging metadata (`.claude-plugin/`), which belongs to the upstream Claude-plugin distribution rather than to the imported skills.
 - OpenAlgo Desktop application source copied into the Breakout tree. The full original remains available through its AGPL-3.0 submodule.
+
+## Resolved limitations (2026-11-01)
+
+- The earlier import transported files as text, so compressed binary fixtures were skipped. The affected fixtures and example configuration files (`TSLA-60d5m.json.gz`, `wall5m-2026-10-19.json.gz`, `spark-5m-live-2026-10-20-1001.json`, `berkshire-q2-2026-top5.json`, `alerts.example.json`, `trader-budget/config.example.json`, `trader-budget/targets.example.json`) have been re-retrieved via Git at the pinned revision `3d0f4ef6986f4984b7c6bd46f7ff4f87744c3abd` and verified byte-identical with `cmp`.
 
 ## Test status
 
-No imported upstream test suite has been executed in this Breakout repository. Some upstream test suites expect fixtures or root-level setup files that are not included in this focused import. Do not report the imported tests as passing.
+No imported upstream test suite has been executed in this Breakout repository. The Day Trader Skill test suite is now structurally complete: every file its tests reference is present (verified by cross-checking all path references in the imported tests against the imported tree). Do not report the imported tests as passing until they are executed.
 
 Before any selected implementation is adapted:
 1. Restore any required fixtures from the pinned upstream revision.
