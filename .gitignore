@@ -1,0 +1,28 @@
+# Secrets — real configuration never enters Git; .env.example is the template.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local operational state (runtime files, logs, backups, local databases)
+runtime/
+backups/
+logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Build / tooling artifacts
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.DS_Store

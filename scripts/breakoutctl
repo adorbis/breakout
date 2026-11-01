@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Breakout control entry point. Every Docker operation is pinned to the
+# canonical root and the "breakout" Compose project, independent of $PWD,
+# and never touches other projects' containers, volumes or networks.
+set -euo pipefail
+
+ROOT=/docker/breakout
+PROJECT=breakout
+COMPOSE_FILE="$ROOT/compose.yaml"
+BACKUP_DIR="$ROOT/runtime/backups"
+LABEL="com.docker.compose.project=$PROJECT"
+
+die() { echo "breakoutctl: $*" >&2; exit 1; }
+
+compose() {
+  [[ -f "$COMPOSE_FILE" ]] || die "no $COMPOSE_FILE yet — deployment config is pending review"
+  local env_args=()
+  [[ -f "$ROOT/.env" ]] && env_args=(--env-file "$ROOT/.env")
+  docker compose --project-directory "$ROOT" -p "$PROJECT" -f "$COMPOSE_FILE" "${env_args[@]}" "$@"
+}
+
+project_volumes() { docker volume ls -q --filter "label=$LABEL"; }
+
+cmd_backup() {
+  local ts dest; ts=$(date -u +%Y%m%dT%H%M%SZ); dest="$BACKUP_DIR/$ts"
+  umask 077; mkdir -p "$dest"
+  git -C "$ROOT" bundle create "$dest/repo.bundle" --all
+  git -C "$ROOT" diff --binary HEAD > "$dest/uncommitted.diff"
+  git -C "$ROOT" ls-files --others --exclude-standard -z \
+    | tar -C "$ROOT" --null -T - -czf "$dest/untracked.tgz"
+  [[ -f "$ROOT/.env" ]] && cp -p "$ROOT/.env" "$dest/env"
+  local v
+  for v in $(project_volumes); do
+    docker run --rm -v "$v:/v:ro" -v "$dest:/b" alpine:3.20 tar -C /v -czf "/b/vol-$v.tgz" .
+  done
+  (cd "$dest" && sha256sum -- * > SHA256SUMS)
+  echo "backup: $dest"
+}
+
+cmd_restore() {
+  local src="${1:-}"; [[ -d "$src" ]] || die "usage: restore <backup-dir> --yes"
+  [[ "${2:-}" == "--yes" ]] || die "restore overwrites Breakout volumes; re-run with --yes"
+  (cd "$src" && sha256sum -c --quiet SHA256SUMS) || die "checksum mismatch in $src"
+  [[ -z "$(docker ps -q --filter "label=$LABEL")" ]] || die "stop Breakout first (breakoutctl stop)"
+  local f v
+  for f in "$src"/vol-*.tgz; do
+    [[ -e "$f" ]] || continue
+    v=$(basename "$f" .tgz); v=${v#vol-}
+    project_volumes | grep -qx "$v" || die "volume $v is not a $PROJECT volume; refusing"
+    docker run --rm -v "$v:/v" -v "$src:/b:ro" alpine:3.20 sh -c 'find /v -mindepth 1 -delete && tar -C /v -xzf "/b/$1"' _ "$(basename "$f")"
+  done
+  echo "volumes restored from $src (source tree: restore from repo.bundle / uncommitted.diff / untracked.tgz manually)"
+}
+
+cmd_health() {
+  compose ps
+  local url=""
+  [[ -f "$ROOT/.env" ]] && url=$(sed -n 's/^BREAKOUT_HEALTH_URL=\([^ #]*\).*/\1/p' "$ROOT/.env")
+  if [[ -n "$url" ]]; then curl -fsS -m 5 "$url" >/dev/null && echo "health: OK $url" || die "health: FAIL $url"
+  else echo "health: BREAKOUT_HEALTH_URL not set; container status only"; fi
+}
+
+case "${1:-help}" in
+  build)   shift; compose build "$@" ;;
+  start)   shift; compose up -d "$@" ;;
+  stop)    shift; compose stop "$@" ;;
+  restart) shift; compose restart "$@" ;;
+  logs)    shift; compose logs --tail=200 "$@" ;;
+  ps|status) compose ps -a ;;
+  health)  cmd_health ;;
+  backup)  cmd_backup ;;
+  restore) shift; cmd_restore "$@" ;;
+  git)     git -C "$ROOT" status -b --short; git -C "$ROOT" log --oneline -3; git -C "$ROOT" submodule status ;;
+  *) echo "usage: breakoutctl {build|start|stop|restart|logs|status|health|backup|restore <dir> --yes|git}" ;;
+esac
