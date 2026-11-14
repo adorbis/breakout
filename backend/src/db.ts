@@ -242,9 +242,10 @@ export class Store {
     ).run(a.id, a.source, a.topic, a.event_time, a.title, a.message, a.priority, a.tags, now());
     return Number(r.changes) > 0;
   }
-  listAlerts(userId: string, opts: { limit?: number; before?: string; unacknowledged?: boolean; q?: string; minPriority?: number } = {}) {
+  listAlerts(userId: string, opts: { limit?: number; before?: string; from?: string; unacknowledged?: boolean; q?: string; minPriority?: number } = {}) {
     const where: string[] = []; const args: (string | number)[] = [userId];
     if (opts.before) { where.push("a.event_time < ?"); args.push(opts.before); }
+    if (opts.from) { where.push("a.event_time >= ?"); args.push(opts.from); }
     if (opts.unacknowledged) where.push("k.alert_id IS NULL");
     if (opts.minPriority) { where.push("COALESCE(a.priority, 3) >= ?"); args.push(opts.minPriority); }
     if (opts.q) { where.push("(a.title LIKE ? ESCAPE '\\' OR a.message LIKE ? ESCAPE '\\')"); const p = `%${opts.q.replace(/[%_\\]/g, "\\$&")}%`; args.push(p, p); }

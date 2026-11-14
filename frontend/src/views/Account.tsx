@@ -17,10 +17,15 @@ const AlertsStatusLine: FC<{ s: AlertsStatus }> = ({ s }) => (
 export const AlertsView: FC<{ minPriority: number; onMinPriority: (n: number) => void; onBadges: () => void }> = ({ minPriority, onMinPriority, onBadges }) => {
   const [q, setQ] = useState("");
   const [unackOnly, setUnackOnly] = useState(false);
+  // IST calendar days; "to" is inclusive, so the query bound is the next IST midnight.
+  const [fromDay, setFromDay] = useState("");
+  const [toDay, setToDay] = useState("");
+  const istStart = (d: string) => (d ? new Date(`${d}T00:00:00+05:30`).toISOString() : undefined);
+  const istEnd = (d: string) => (d ? new Date(new Date(`${d}T00:00:00+05:30`).getTime() + 86_400_000).toISOString() : undefined);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<AlertItem | null>(null);
   const toast = useToast();
-  const { data, error, busy, refresh } = useLoad(() => api.alerts({ q, unacknowledged: unackOnly, min_priority: minPriority }), 30, [q, unackOnly, minPriority]);
+  const { data, error, busy, refresh } = useLoad(() => api.alerts({ q, unacknowledged: unackOnly, min_priority: minPriority, from: istStart(fromDay), before: istEnd(toDay) }), 30, [q, unackOnly, minPriority, fromDay, toDay]);
   const rows = data?.alerts ?? [];
   const allSel = rows.length > 0 && rows.every((r) => sel.has(r.id));
   const ack = async (ids: string[] | "all") => {
@@ -44,6 +49,9 @@ export const AlertsView: FC<{ minPriority: number; onMinPriority: (n: number) =>
           <input type="search" placeholder="Search alerts…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search alerts" />
           <label className="check"><input type="checkbox" checked={unackOnly} onChange={(e) => setUnackOnly(e.target.checked)} /> Unacknowledged only</label>
           <Slider label="Min priority" min={1} max={5} value={minPriority} onChange={onMinPriority} format={(v) => PRIORITY[v] ?? String(v)} />
+          <label className="date-field"><span className="field-label">From (IST)</span><input type="date" value={fromDay} max={toDay || undefined} onChange={(e) => setFromDay(e.target.value)} aria-label="Alerts from date" /></label>
+          <label className="date-field"><span className="field-label">To</span><input type="date" value={toDay} min={fromDay || undefined} onChange={(e) => setToDay(e.target.value)} aria-label="Alerts to date" /></label>
+          {(fromDay || toDay) && <button className="btn btn-sm" onClick={() => { setFromDay(""); setToDay(""); }}>Clear dates</button>}
           {busy && <span className="muted small">Refreshing…</span>}
         </div>
         {error && <Empty title="Breakout API error" tone="err">{error}</Empty>}

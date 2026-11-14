@@ -149,6 +149,11 @@ test("F4 alerts: ntfy poll stores once, 403 is reported (not 'no alerts'), acks 
   assert.deepEqual(r.body.alerts[1].tags, ["eyes"]);
   assert.equal((await call(app, "/alerts?q=SBIN", { cookie: c1 })).body.alerts.length, 1);
   assert.equal((await call(app, "/alerts?min_priority=3", { cookie: c1 })).body.alerts.length, 1);
+  // Date range: a1 at 1763100000 s, a2 sixty seconds later. `from` inclusive, `before` exclusive; bad dates ignored.
+  const a2iso = new Date(1763100060_000).toISOString();
+  assert.deepEqual((await call(app, `/alerts?from=${encodeURIComponent(a2iso)}`, { cookie: c1 })).body.alerts.map((a: any) => a.id), ["a2"]);
+  assert.deepEqual((await call(app, `/alerts?before=${encodeURIComponent(a2iso)}`, { cookie: c1 })).body.alerts.map((a: any) => a.id), ["a1"]);
+  assert.equal((await call(app, "/alerts?from=not-a-date", { cookie: c1 })).body.alerts.length, 2);
   assert.equal((await call(app, "/alerts/ack", { method: "POST", cookie: c1, body: { ids: ["a1"] } })).body.acknowledged, 1);
   assert.equal((await call(app, "/badges", { cookie: c1 })).body.alerts_unacknowledged, 1);
   assert.equal((await call(app, "/badges", { cookie: c2 })).body.alerts_unacknowledged, 2, "acks are per user");

@@ -343,3 +343,23 @@ th.sortable button { all: unset; cursor: pointer; } th.sortable button:focus-vis
   .set-control select, .set-control .slider { min-width: 0; width: 100%; }
 }
 .table-scroll { max-height: 62vh; overflow: auto; } .table-scroll thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+
+/* --- Watchlists (WatchlistsView.tsx) ----------------------------------------------------- */
+.wl { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 12px; align-items: start; }
+.wl-new { display: flex; gap: 6px; margin-bottom: 8px; }
+.wl-new input { flex: 1; min-width: 0; }
+.wl-lists { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.wl-lists li { display: flex; align-items: center; gap: 2px; border-radius: 6px; }
+.wl-lists li.on { background: var(--panel-2); box-shadow: inset 3px 0 0 var(--accent); }
+.wl-open { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 8px; background: none; border: 0; cursor: pointer; color: inherit; text-align: left; }
+.wl-open b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.wl-none { padding: 6px 8px; }
+.wl-add { position: relative; margin-bottom: 10px; }
+.wl-add input { width: 100%; }
+.wl-results { list-style: none; margin: 4px 0 0; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); max-height: 280px; overflow: auto; }
+.wl-results li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 4px 6px; border-radius: 4px; }
+.wl-results li.on { background: var(--panel-2); }
+.row-actions { display: flex; gap: 4px; justify-content: flex-end; align-items: center; white-space: nowrap; }
+.sym-link { background: none; border: 0; padding: 0; color: var(--link); cursor: pointer; font: inherit; }
+@media (max-width: 860px) { .wl { grid-template-columns: 1fr; } }
+.date-field { display: inline-flex; align-items: center; gap: 6px; } .date-field input { width: 150px; }

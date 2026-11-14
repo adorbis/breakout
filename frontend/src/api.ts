@@ -276,12 +276,13 @@ export const api = {
     request<InstrumentDetail>(`/instruments/detail?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(symbol)}`),
   quote: (exchange: string, symbol: string) =>
     requestAny<QuoteResult>(`/instruments/quote?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(symbol)}`),
-  alerts: (q: { unacknowledged?: boolean; q?: string; min_priority?: number; before?: string } = {}) => {
+  alerts: (q: { unacknowledged?: boolean; q?: string; min_priority?: number; before?: string; from?: string } = {}) => {
     const p = new URLSearchParams();
     if (q.unacknowledged) p.set("unacknowledged", "1");
     if (q.q) p.set("q", q.q);
     if (q.min_priority && q.min_priority > 1) p.set("min_priority", String(q.min_priority));
     if (q.before) p.set("before", q.before);
+    if (q.from) p.set("from", q.from);
     return request<{ status: AlertsStatus; alerts: AlertItem[] }>(`/alerts?${p}`);
   },
   ackAlerts: (ids: string[] | "all") => request<{ acknowledged: number }>("/alerts/ack", { method: "POST", body: JSON.stringify({ ids }) }),

@@ -270,7 +270,7 @@ const Shell: FC<{ user: User; onLogout: () => void }> = ({ user, onLogout }) => 
     case "analysis": body = <AnalysisView instrument={instrument} onPick={() => openPalette((i) => go("analysis", i))} nav={nav} />; break;
     case "positions": body = <PositionsPage refreshSeconds={refresh} />; break;
     case "chart": body = <ChartView prefs={prefs} savePrefs={savePrefs} focus={instrument} pick={(cb) => openPalette(cb)} />; break;
-    case "watchlists": body = <div className="view"><WatchlistsView defaultExchange={prefs.default_exchange} onOpenInstrument={(i) => nav.chart(i)} /></div>; break;
+    case "watchlists": body = <div className="view"><WatchlistsView nav={nav} /></div>; break;
     case "alerts": body = <AlertsView minPriority={prefs.alert_min_priority} onMinPriority={(n) => savePrefs({ alert_min_priority: n })} onBadges={badges.refresh} />; break;
     case "copilot": body = <CopilotView config={config} instrument={instrument} askAbout={askAbout} historyWidth={prefs.panel_sizes.chat_history ?? 280} onHistoryWidth={(n) => savePrefs({ panel_sizes: { ...prefs.panel_sizes, chat_history: n } })} />; break;
     case "notifications": body = <NotificationsView onBadges={badges.refresh} onOpenAlerts={() => go("alerts")} />; break;

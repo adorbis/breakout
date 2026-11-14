@@ -20,6 +20,8 @@ import { EXCHANGES } from "./policy.ts";
 import { readCapabilities } from "./capabilities.ts";
 
 const err = (code: string, message: string) => ({ error: { code, message } });
+/** A query timestamp normalised to the stored ISO-UTC form, or undefined if absent/invalid. */
+const isoParam = (v: string | undefined) => { if (!v) return undefined; const n = Date.parse(v); return Number.isFinite(n) ? new Date(n).toISOString() : undefined; };
 
 export const PASSWORD_MIN = 12;
 export const ProfilePatch = z.object({
@@ -176,7 +178,8 @@ export function mountFeatures(api: Hono<AppEnv>, deps: {
     const minP = Number(c.req.query("min_priority") ?? 0);
     const rows = store.listAlerts(c.get("user").id, {
       limit: Number(c.req.query("limit") ?? 100) || 100,
-      before: c.req.query("before") || undefined,
+      before: isoParam(c.req.query("before")),
+      from: isoParam(c.req.query("from")),
       unacknowledged: c.req.query("unacknowledged") === "1",
       q: (c.req.query("q") ?? "").slice(0, 80) || undefined,
       minPriority: minP >= 1 && minP <= 5 ? minP : undefined,

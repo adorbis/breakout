@@ -196,6 +196,9 @@ try {
     assert.ok(await page.getByText("NOT_BUILT").first().isVisible());
     assert.ok(await page.getByRole("cell", { name: "position_intelligence" }).isVisible());
     assert.ok(await page.getByText("Beyond contract").first().isVisible());
+    const breadth = page.locator(".panel", { hasText: "Market breadth & index" });
+    assert.ok(await breadth.getByText("-0.61%").isVisible(), "index change as TradeOS reported it");
+    assert.ok(await breadth.getByText("no breadth computed in last 20 min").isVisible(), "missing breadth stated, not zero");
     await shot(page, "04-market");
   });
   await step("scanner: rows, unknown verdict badged, filters, sort, context menu → add to watchlist", async () => {
@@ -283,6 +286,11 @@ try {
     await page.waitForFunction(() => document.querySelectorAll("table.data tbody tr").length === 1);
     await page.getByLabel("Search alerts").fill("");
     await page.waitForFunction(() => document.querySelectorAll("table.data tbody tr").length === 2);
+    // Date range (IST days): a future "from" empties the list; clearing restores it.
+    await page.getByLabel("Alerts from date").fill("2099-01-01");
+    await page.waitForFunction(() => document.querySelectorAll("table.data tbody tr").length === 0);
+    await page.getByRole("button", { name: "Clear dates" }).click();
+    await page.waitForFunction(() => document.querySelectorAll("table.data tbody tr").length === 2);
     await page.locator("tr", { hasText: "WATCH IOC CE" }).getByRole("button", { name: "Acknowledge", exact: true }).click();
     await page.getByText("1 acknowledged").waitFor();
     await page.waitForFunction(() => document.querySelector('a[href^="/app/alerts"] .badge')?.textContent === "1");
@@ -336,7 +344,26 @@ try {
     assert.ok(await panel.getByText("TradeOS alerts (ntfy)").isVisible());
     assert.ok(await panel.getByText("Not implemented").first().isVisible());
   });
+  await step("watchlists: create, add from the TradeOS universe, rename and delete through dialogs", async () => {
+    await nav(page, "Watchlists").click();
+    await page.getByLabel("New watchlist name").fill("Banks");
+    await page.getByRole("button", { name: "Create" }).click();
+    await page.locator(".panel.wl-main").getByRole("heading", { name: "Banks" }).waitFor();
+    await page.getByLabel("Add instrument").fill("ABB");
+    const opt = page.getByRole("option").filter({ hasText: "ABB" }).first();
+    await opt.getByText("TradeOS universe").waitFor();
+    await opt.getByRole("button", { name: "Add" }).click();
+    await page.locator(".wl-main tbody tr", { hasText: "ABB" }).waitFor();
+    await page.getByRole("button", { name: "Rename Banks" }).click();
+    await page.getByLabel("Watchlist name", { exact: true }).fill("PSU Banks");
+    await page.getByRole("button", { name: "Save" }).click();
+    await page.locator(".panel.wl-main").getByRole("heading", { name: "PSU Banks" }).waitFor();
+    await page.getByRole("button", { name: "Delete PSU Banks" }).click();
+    await page.locator(".modal").getByRole("button", { name: "Delete" }).click();
+    await page.getByRole("button", { name: "Delete PSU Banks" }).waitFor({ state: "detached" });
+  });
   await step("settings: notification switch and quiet hours persist across reload", async () => {
+    await nav(page, "Settings").click();
     const sw = page.getByRole("switch", { name: "Watchlist alert notifications" });
     assert.equal(await sw.getAttribute("aria-checked"), "true");
     await sw.click();

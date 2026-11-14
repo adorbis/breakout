@@ -215,6 +215,30 @@ export const MarketView: FC<{ refreshSeconds: number; clock: SessionClock | null
           ) : <Empty title="TradeOS reports no regime engine" />}
         </BridgeState>
       </Panel>
+      <Panel title="Market breadth & index" className="span-2" sub="TradeOS's breadth, index and volatility components, as reported.">
+        <BridgeState feed={sentiment.data} what="Breadth">
+          {(d) => {
+            const comp = (id: string) => d.components.find((c) => c.id === id);
+            const bus = health.data?.ecosystem.state === "ok" ? health.data.ecosystem.data.buses.find((b) => b.name === "market_bus") : undefined;
+            const cell = (id: string, label: string) => {
+              const c = comp(id);
+              return (
+                <div><span className="k">{label}</span>
+                  {!c ? <span className="muted">not reported</span>
+                    : c.value !== null ? <><b className={c.score !== null && c.score > 0 ? "up" : c.score !== null && c.score < 0 ? "down" : ""}>{c.value}</b>{c.score !== null && <span className="muted small"> score {c.score > 0 ? "+" : ""}{c.score}</span>}</>
+                    : <span className="muted" title="Missing, not neutral">{c.note ?? "missing"}</span>}
+                </div>
+              );
+            };
+            return (<>
+              <div className="kv">{cell("breadth", "Advance / decline")}{cell("index", "NIFTY change")}{cell("vix", "India VIX")}{cell("pcr", "Put/call ratio")}</div>
+              <Provenance parts={["TradeOS", "/market/sentiment components", d.as_of ? `data ${fmtWhen(d.as_of)}` : null,
+                bus ? `market bus ${fmtDur(bus.age_seconds)} old (contract ${fmtDur(bus.contract_seconds)})` : null]} tone={bus?.fresh === false ? "warn" : undefined} />
+              <p className="muted small">A component without a value is missing in TradeOS, not neutral. Breakout does not compute breadth itself.</p>
+            </>);
+          }}
+        </BridgeState>
+      </Panel>
       <Panel title="Market sentiment" className="span-2">
         <BridgeState feed={sentiment.data} what="Sentiment">
           {(d, f) => (
