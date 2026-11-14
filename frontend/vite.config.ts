@@ -10,5 +10,6 @@ export default defineConfig({
     port: 5173,
     proxy: { "/api": { target: "http://127.0.0.1:8787", changeOrigin: false } },
   },
-  build: { outDir: "dist", sourcemap: false },
+  // Fonts are never inlined as data: URIs, so the server's CSP can stay font-src 'self'.
+  build: { outDir: "dist", sourcemap: false, assetsInlineLimit: (file: string) => (/\.(woff2?|ttf|otf)$/.test(file) ? false : undefined) },
 });

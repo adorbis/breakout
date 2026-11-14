@@ -61,7 +61,7 @@ export const ChartPane: FC<ChartProps> = ({ exchange, symbol, interval, onInterv
     if (!host.current) return;
     const c = createChart(host.current, {
       autoSize: true,
-      layout: { background: { color: "transparent" }, textColor: css("--muted", "#5B6B7C"), fontFamily: "Inter, system-ui, sans-serif", fontSize: 11 },
+      layout: { background: { color: "transparent" }, textColor: css("--muted", "#5B6B7C"), fontFamily: css("--sans", "system-ui, sans-serif"), fontSize: 11 },
       grid: { vertLines: { color: css("--grid", "rgba(120,130,150,.12)") }, horzLines: { color: css("--grid", "rgba(120,130,150,.12)") } },
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: { borderColor: css("--line", "#D3DBE3") },
@@ -85,6 +85,8 @@ export const ChartPane: FC<ChartProps> = ({ exchange, symbol, interval, onInterv
       setLegend(d && p.time ? { time: Number(p.time) - IST, open: d.open, high: d.high, low: d.low, close: d.close, volume: 0 } : null);
     });
     chart.current = c;
+    // Canvas text does not re-render when a web font finishes loading; re-apply once it has.
+    document.fonts?.ready.then(() => { if (chart.current === c) c.applyOptions({ layout: { fontFamily: css("--sans", "system-ui, sans-serif") } }); }).catch(() => {});
     return () => { c.remove(); chart.current = null; series.current = null; priceLines.current = []; };
   }, []);
 
@@ -157,7 +159,7 @@ export const ChartPane: FC<ChartProps> = ({ exchange, symbol, interval, onInterv
         </div>
         <span className="chart-src">
           {loading ? "Loading…" : res?.source === "openalgo" ? <><DataStateBadge s={res.data_state} /> OpenAlgo · read {ago(res.as_of)}{res.data_state?.last_bar_at ? ` · last bar ${fmtWhen(res.data_state.last_bar_at)}` : ""}</>
-            : res?.source === "demo" ? <b className="demo-tag">DEMO DATA</b> : res ? <DataStateBadge s={res.data_state ?? { state: "unavailable", label: "UNAVAILABLE", detail: "No data", last_bar_at: null, lag_seconds: null }} /> : ""}
+            : res?.source === "demo" ? <DataStateBadge s={res.data_state ?? { state: "demo", label: "DEMO", detail: "Synthetic development data — not market data.", last_bar_at: null, lag_seconds: null }} /> : res ? <DataStateBadge s={res.data_state ?? { state: "unavailable", label: "UNAVAILABLE", detail: "No data", last_bar_at: null, lag_seconds: null }} /> : ""}
         </span>
       </div>
       <div className="chart-legend" aria-live="off">

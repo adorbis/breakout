@@ -12,7 +12,7 @@ const REFRESH_MS = 60_000;
 export function fmtTime(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "medium" });
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("en-IN", { dateStyle: "short", timeStyle: "medium", timeZone: "Asia/Kolkata" }) + " IST";
 }
 export function fmtAge(s: number): string {
   if (s < 60) return `${s}s ago`;

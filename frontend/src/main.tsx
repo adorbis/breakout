@@ -3,6 +3,9 @@ import { createRoot } from "react-dom/client";
 import { api, type User } from "./api.ts";
 import { PublicSite } from "./PublicSite.tsx";
 import { navigate, useRoute } from "./router.ts";
+// Fonts are bundled locally (OFL-1.1): no third-party font requests, same rendering on every machine.
+import "@fontsource-variable/inter";
+import "@fontsource-variable/plus-jakarta-sans";
 import "./styles.css";
 import "./terminal.css";
 

@@ -438,6 +438,50 @@ try {
     await heading(page, "Instrument analysis").waitFor();
     assert.match(page.url(), /symbol=ABB/);
   });
+  await step("workflow: scanner → analysis → evidence → save → back to scanner (filters kept); universe, dashboard, watchlist and AI Chat all reach analysis", async () => {
+    const atWorkspace = async (sym: string) => {
+      await page.locator(".ws-id h2", { hasText: sym }).waitFor();
+      assert.match(page.url(), new RegExp(`/app/analysis\\?exchange=NSE&symbol=${sym}`));
+      assert.ok(await page.locator(".tsearch", { hasText: sym }).isVisible(), "selected instrument carried in the top bar");
+    };
+    // Scanner → analysis → save → back.
+    await nav(page, "Scanner").click();
+    await page.getByRole("tab", { name: "All" }).click();
+    await page.getByLabel("Filter symbol").fill("IO");
+    await page.getByRole("button", { name: "IOC", exact: true }).click();
+    await atWorkspace("IOC");
+    await page.locator(".panel", { hasText: "This is the same evidence the AI receives" }).locator(".ev").first().waitFor();
+    await page.getByRole("button", { name: "Save snapshot" }).click();
+    await page.getByLabel("Analysis note").fill("Workflow check");
+    await page.locator(".modal").getByRole("button", { name: "Save", exact: true }).click();
+    await page.locator(".panel", { hasText: "Saved IOC analyses" }).getByText("Workflow check").waitFor();
+    await page.goBack();
+    await heading(page, "Scanner").waitFor();
+    assert.equal(await page.getByLabel("Filter symbol").inputValue(), "IO", "scanner filter restored after returning");
+    assert.equal(await page.locator("table.data tbody tr").count(), 1);
+    await page.getByRole("button", { name: "Reset" }).click();
+    // F&O universe → analysis.
+    await page.getByRole("tab", { name: "F&O universe" }).click();
+    await page.locator(".authority", { hasText: "Scanned F&O universe" }).getByRole("button", { name: "ABB", exact: true }).click();
+    await atWorkspace("ABB");
+    // Dashboard scanner snapshot → analysis.
+    await nav(page, "Dashboard").click();
+    await page.locator(".panel", { hasText: "Scanner snapshot" }).getByText("SBIN").click();
+    await atWorkspace("SBIN");
+    // Watchlist → analysis.
+    await nav(page, "Watchlists").click();
+    await page.getByRole("button", { name: /^Momentum/ }).click();
+    await page.locator(".wl-main").getByRole("button", { name: "SBIN", exact: true }).click();
+    await atWorkspace("SBIN");
+    // Analysis → AI Chat → back to analysis from the evidence panel.
+    await page.getByRole("button", { name: "Ask AI" }).first().click();
+    await heading(page, "AI Chat").waitFor();
+    await page.locator(".evidence").getByRole("button", { name: "Analysis" }).click();
+    await atWorkspace("SBIN");
+    // Clean up the snapshot made above.
+    await page.goto(`${ORIGIN}/app/analysis?exchange=NSE&symbol=IOC`);
+    await page.locator(".panel", { hasText: "Saved IOC analyses" }).getByRole("button", { name: /Delete saved analysis/ }).click();
+  });
   await step("subscription: early access, no billing", async () => {
     await nav(page, "Subscription").click();
     await page.getByRole("heading", { name: "Early Access" }).waitFor();
@@ -495,6 +539,27 @@ try {
     await m.getByRole("button", { name: "IOC", exact: true }).waitFor();
     assert.ok(await noHScroll(m));
     await shot(m, "14-mobile-scanner");
+  });
+  await step("mobile scanner: cards (not the wide table) at 360/390/430 px, why-listed, analyse, no horizontal scroll", async () => {
+    for (const width of [360, 390, 430]) {
+      await m.setViewportSize({ width, height: 844 });
+      await m.waitForTimeout(250);
+      await m.locator(".scan-card").first().waitFor();
+      assert.equal(await m.locator(".scanner-table, table.data").count(), 0, `${width}px: no wide table`);
+      assert.equal(await m.locator(".scan-card").count(), 3);
+      assert.ok(await noHScroll(m), `${width}px: no horizontal scroll`);
+    }
+    const ioc = m.locator(".scan-card", { has: m.getByRole("button", { name: "IOC", exact: true }) });
+    assert.ok(await ioc.getByText("Execution").isVisible(), "execution score shown when supplied");
+    const tata = m.locator(".scan-card", { has: m.getByRole("button", { name: "TATASTEEL", exact: true }) });
+    assert.ok(await tata.getByText("Opportunity").isVisible());
+    await ioc.getByRole("button", { name: "Why IOC CE is listed" }).click();
+    await ioc.locator(".scan-why").getByText("Signal quality").waitFor();
+    await shot(m, "15-mobile-scanner-cards");
+    await ioc.getByRole("button", { name: "Analyse" }).click();
+    await m.getByRole("heading", { name: "IOC" }).first().waitFor();
+    assert.match(m.url(), /\/app\/analysis\?exchange=NSE&symbol=IOC/);
+    assert.ok(await noHScroll(m), "workspace fits the phone");
   });
 
   await step("bridge traffic was GET-only and allowlisted", async () => {

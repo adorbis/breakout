@@ -155,7 +155,7 @@ export function createApp(deps: {
   app.use("*", secureHeaders({
     contentSecurityPolicy: {
       defaultSrc: ["'self'"], scriptSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", "data:"], connectSrc: ["'self'"], frameAncestors: ["'none'"],
+      imgSrc: ["'self'", "data:"], fontSrc: ["'self'"], connectSrc: ["'self'"], frameAncestors: ["'none'"], objectSrc: ["'none'"],
       baseUri: ["'none'"], formAction: ["'self'"],
     },
     referrerPolicy: "no-referrer",

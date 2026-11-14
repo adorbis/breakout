@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState, type FC, type FormEvent } from "react
 import type { UIMessage } from "ai";
 import { api, ApiError, type AppConfig, type Conversation, type ModelInfo, type TradingContext } from "../api.ts";
 import { ChatPane } from "../ChatPane.tsx";
-import { Dropdown, Splitter } from "../ui.tsx";
+import { Dropdown, Splitter, fmtWhen } from "../ui.tsx";
 import { EvidencePanel } from "./EvidencePanel.tsx";
 
 const EV_KEY = "breakout.copilot.evidenceCollapsed";
@@ -37,7 +37,7 @@ const HistoryItem: FC<{ c: Conversation; active: boolean; onOpen: () => void; on
     <li className={`hist-item${active ? " active" : ""}`}>
       <button className="hist-open" onClick={onOpen} title={c.title}>
         <span className="hist-title">{c.title}</span>
-        <span className="hist-sub">{c.context ? `${c.context.exchange} · ${c.context.symbol} · ` : ""}{new Date(c.updatedAt).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}</span>
+        <span className="hist-sub">{c.context ? `${c.context.exchange} · ${c.context.symbol} · ` : ""}{fmtWhen(c.updatedAt)}</span>
       </button>
       {mode === "confirm" ? (
         <span className="hist-confirm">Delete?<button className="btn btn-sm btn-danger" onClick={onDelete}>Delete</button><button className="btn btn-sm" onClick={() => setMode("view")}>Cancel</button></span>
@@ -57,7 +57,8 @@ export const CopilotView: FC<{
   /** Set when another view asked to "Ask AI" about an instrument; consumed once. */
   askAbout: { exchange: string; symbol: string; nonce: number } | null;
   historyWidth: number; onHistoryWidth: (n: number) => void;
-}> = ({ config, instrument, askAbout, historyWidth, onHistoryWidth }) => {
+  onAnalyse?: (i: { exchange: string; symbol: string }) => void;
+}> = ({ config, instrument, askAbout, historyWidth, onHistoryWidth, onAnalyse }) => {
   const [list, setList] = useState<Conversation[]>([]);
   const [active, setActive] = useState<{ conversation: Conversation; messages: UIMessage[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -156,7 +157,7 @@ export const CopilotView: FC<{
             model={model} context={ctx} disabled={Boolean(disabledReason)} disabledReason={disabledReason} onTurnEnd={() => { refresh().catch(() => {}); setTurns((n) => n + 1); }} />
         ) : <div className="loading">Loading…</div>}
       </section>
-      <EvidencePanel context={ctx} refreshKey={turns} collapsed={evCollapsed} onCollapse={collapseEvidence} />
+      <EvidencePanel context={ctx} refreshKey={turns} collapsed={evCollapsed} onCollapse={collapseEvidence} onAnalyse={onAnalyse} />
     </div>
   );
 };

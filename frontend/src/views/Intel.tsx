@@ -1,5 +1,5 @@
 // TradeOS intelligence presentation: Dashboard, Market overview, Scanner,
-// Positions (WF-08) and Trade analysis (next-candle). TradeOS output is
+// Positions (WF-08) and scanner universe (the instrument workspace is in Workspace.tsx). TradeOS output is
 // rendered inside Authority containers with its own vocabulary; Breakout
 // adds provenance and freshness, never a verdict of its own.
 import { Fragment, useMemo, useState, type FC } from "react";
@@ -10,7 +10,7 @@ import {
 import { PositionsView as V1PositionsView, W7ScoresView } from "../Intelligence.tsx";
 import {
   Authority, BridgeState, Dropdown, Empty, LabelBadge, Panel, Provenance, Slider, StateChip, Tabs, Tone,
-  ago, fmtDur, fmtInt, fmtNum, fmtWhen, useContextMenu, useLoad, useSort, type MenuItem
+  ago, fmtDur, fmtInt, fmtNum, fmtWhen, useContextMenu, useLoad, useMediaQuery, useSessionState, useSort, type MenuItem
 } from "../ui.tsx";
 import { loadScanner, type ScanResult, type ScanRow } from "./feeds.ts";
 import { CapabilityPanel } from "./Capabilities.tsx";
@@ -23,6 +23,29 @@ export interface Nav {
   addToWatchlist: (i: { exchange: string; symbol: string; instrument_key?: string | null }) => void;
   go: (view: string) => void;
 }
+
+/** Phone layout for a scanner row: TradeOS's fields only, execution score only when supplied. */
+const ScanCard: FC<{ r: ScanRow; lot: number | null; open: boolean; onToggle: () => void; onAnalyse: () => void; onMenu: (e: React.MouseEvent) => void; src: "v1" | "bridge" }> = ({ r, lot, open, onToggle, onAnalyse, onMenu, src }) => (
+  <li className={`scan-card${open ? " open" : ""}`}>
+    <div className="scan-card-top">
+      <button className="sym-link scan-card-sym" onClick={onAnalyse} title="Open instrument analysis"><b>{r.symbol}</b></button>
+      <span className="scan-card-badges"><LabelBadge l={r.verdict} kind="verdict" /><LabelBadge l={r.direction} kind="direction" /></span>
+    </div>
+    <div className="scan-card-meta muted small">{r.exchange}{lot !== null ? ` · F&O lot ${fmtInt(lot)}` : ""}{r.age_label ? ` · scanned ${r.age_label} ago` : " · scan age not provided"}</div>
+    <dl className="scan-card-nums">
+      <div><dt>Opportunity</dt><dd>{fmtInt(r.opportunity_score)}</dd></div>
+      {r.execution_score !== null && <div><dt>Execution</dt><dd>{fmtInt(r.execution_score)}</dd></div>}
+      {r.p_score !== null && <div><dt>P-score</dt><dd>{fmtInt(r.p_score)}</dd></div>}
+      {r.last_price !== null && <div><dt>Last at scan</dt><dd>{fmtNum(r.last_price)}</dd></div>}
+    </dl>
+    <div className="scan-card-actions">
+      <button className="btn btn-sm" aria-expanded={open} aria-label={`Why ${r.symbol} ${r.direction.value} is listed`} onClick={onToggle}>{open ? "Hide why" : "Why listed"}</button>
+      <button className="btn btn-sm btn-primary" onClick={onAnalyse}>Analyse</button>
+      <button className="icon-btn" aria-label={`Actions for ${r.symbol}`} onClick={onMenu}>⋯</button>
+    </div>
+    {open && <ScanWhy r={r} src={src} onOpen={onAnalyse} />}
+  </li>
+);
 
 // --- F&O universe (TradeOS scanned instruments; lot sizes as TradeOS recorded them) ------
 const UniverseTab: FC<{ nav: Nav }> = ({ nav }) => {
@@ -112,12 +135,17 @@ const ScanWhy: FC<{ r: ScanRow; src: "v1" | "bridge"; onOpen: () => void }> = ({
 
 export const ScannerView: FC<{ nav: Nav; refreshSeconds: number }> = ({ nav, refreshSeconds }) => {
   const { data, error, busy, refresh } = useLoad(loadScanner, refreshSeconds || 0);
-  const [tab, setTab] = useState<"all" | "CE" | "PE" | "w7" | "universe">("all");
-  const [q, setQ] = useState("");
-  const [minScore, setMinScore] = useState(0);
-  const [verdicts, setVerdicts] = useState<string[]>([]);
+  // Filters persist for the session, so returning from Instrument analysis restores the view.
+  const [tab, setTab] = useSessionState<"all" | "CE" | "PE" | "w7" | "universe">("breakout.scanner.tab", "all");
+  const [q, setQ] = useSessionState("breakout.scanner.q", "");
+  const [minScore, setMinScore] = useSessionState("breakout.scanner.min", 0);
+  const [verdicts, setVerdicts] = useSessionState<string[]>("breakout.scanner.verdicts", []);
   const { th, apply, sort, setSort } = useSort<"symbol" | "verdict" | "opportunity_score" | "execution_score" | "last_price" | "verdict_rank" | "age_minutes">("opportunity_score");
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const phone = useMediaQuery("(max-width: 640px)");
+  // F&O lot sizes for the phone cards, as TradeOS recorded them (universe feed, cached 10 min server-side).
+  const uni = useLoad(() => (phone ? api.bridgeUniverse() : Promise.resolve(null)), 0, [phone]);
+  const lots = useMemo(() => new Map((uni.data && uni.data.state === "ok" ? uni.data.data.instruments : []).map((i) => [i.symbol, i.lot_size])), [uni.data]);
   const toggle = (k: string) => setOpen((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const openMenu = useContextMenu();
 
@@ -173,7 +201,13 @@ export const ScannerView: FC<{ nav: Nav; refreshSeconds: number }> = ({ nav, ref
               <Authority title="Scanner candidates" meta={<ScanProvenance r={data} />}>
                 {data.window === "no_live_scan" ? (
                   <Empty title="No live scan in TradeOS's 30-minute window">This means TradeOS has not scanned recently (e.g. outside market hours) — it is not a "no signals" decision.</Empty>
-                ) : rows.length === 0 ? <Empty title="No rows match the filters" /> : (
+                ) : rows.length === 0 ? <Empty title="No rows match the filters" /> : phone ? (
+                  <ul className="scan-cards" aria-label="Scanner candidates">
+                    {rows.map((r) => { const k = `${r.instrument_key}:${r.direction.value}`; return (
+                      <ScanCard key={k} r={r} lot={lots.get(r.symbol) ?? null} open={open.has(k)} onToggle={() => toggle(k)}
+                        onAnalyse={() => nav.analysis(r)} onMenu={(e) => rowMenu(e, r)} src={data.kind} />); })}
+                  </ul>
+                ) : (
                   <div className="table-wrap">
                     <table className="data">
                       <thead><tr>{th("symbol", "Instrument")}<th>Dir</th>{th("verdict", "Verdict")}{th("opportunity_score", "Opp.", "num")}{th("execution_score", "Exec.", "num")}

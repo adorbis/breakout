@@ -18,12 +18,13 @@ Exact versions are pinned in `package.json` files, and the full tree is in `pack
 | `react`, `react-dom` | 19.2.1 | MIT | UI |
 | `remark-gfm` | 4.0.1 | MIT | GitHub-flavoured Markdown (tables, lists) |
 | `lightweight-charts` | 4.2.3 | Apache-2.0 | Candlestick/volume charts with zoom, pan and crosshair (TradingView; [repo](https://github.com/tradingview/lightweight-charts)). Pulls `fancy-canvas` 2.1.0 (MIT). Added 2026-11-14 |
+| `@fontsource-variable/inter`, `@fontsource-variable/plus-jakarta-sans` | 5.3.0 | OFL-1.1 (package licence field and LICENSE file) | Self-hosted UI and display typefaces. The `.woff2` files are bundled into the frontend build and served from Breakout, so no third-party font requests are made. The build never inlines fonts, so the CSP stays `font-src 'self'`. Added 2026-11-15 |
 
 Dev only: `vite` 8.3.5, `@vitejs/plugin-react` 6.1.2, `typescript` 5.9.3, `@types/*`, and `playwright-core` 1.56.1 (Apache-2.0, browser e2e).
 
 ## Licence summary
 
-There are 224 third-party production packages, all under permissive licences: 209 MIT, 9 Apache-2.0, 3 ISC, 1 BSD-3-Clause, 1 0BSD, and 1 `(AFL-2.1 OR BSD-3-Clause)` (`json-schema`). No copyleft licence appears in the production tree. `npm audit --omit=dev` reported 0 vulnerabilities on 2026-11-01 and again on 2026-11-14 after the @hono/node-server patch.
+There are 224 third-party production packages, all under permissive licences: 209 MIT, 9 Apache-2.0, 3 ISC, 1 BSD-3-Clause, 1 0BSD, and 1 `(AFL-2.1 OR BSD-3-Clause)` (`json-schema`). The two font packages add SIL Open Font License 1.1 font files (a permissive font licence; not copyleft for software). No copyleft licence appears in the production tree. `npm audit --omit=dev` reported 0 vulnerabilities on 2026-11-01 and again on 2026-11-14 after the @hono/node-server patch.
 
 ## Notes
 

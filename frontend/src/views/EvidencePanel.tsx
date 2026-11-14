@@ -18,7 +18,8 @@ export const EvidencePanel: FC<{
   /** Bumped after each Copilot turn so the panel shows what the latest turn saw. */
   refreshKey: number;
   collapsed: boolean; onCollapse: (c: boolean) => void;
-}> = ({ context, refreshKey, collapsed, onCollapse }) => {
+  onAnalyse?: (i: { exchange: string; symbol: string }) => void;
+}> = ({ context, refreshKey, collapsed, onCollapse, onAnalyse }) => {
   const [ev, setEv] = useState<Evidence | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -38,6 +39,7 @@ export const EvidencePanel: FC<{
         {!collapsed && <>
           <div className="evidence-title"><b>Copilot evidence</b>
             <span className="muted small">{context ? `${context.exchange} · ${context.symbol}` : "market-wide (no instrument)"}</span></div>
+          {context && onAnalyse && <button className="btn btn-sm" onClick={() => onAnalyse(context)} title={`Open ${context.symbol} in Instrument analysis`}>Analysis</button>}
           <button className="btn btn-sm" onClick={load} disabled={busy}>{busy ? "Reading…" : "Refresh"}</button>
         </>}
       </header>

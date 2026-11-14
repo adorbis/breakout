@@ -152,7 +152,7 @@ export async function readCapabilities(bridge: Bridge, tradeos: TradeOS, now: ()
     if (!bridge.enabled) items.set("next_candle", notConnected("next_candle", "TradeOS bridge is disabled on this server."));
     else items.set("next_candle", {
       ...base("next_candle"), state: "available", mode: "bridge", source: "/analysis/next-candle/{instrument_key}",
-      summary: "Read per instrument on Trade analysis. TradeOS declines when its candles are not live, and Breakout shows that refusal verbatim.",
+      summary: "Read per instrument in Instrument analysis. TradeOS declines when its candles are not live, and Breakout shows that refusal verbatim.",
       detail: [w9line, "This is TradeOS's speculator next-candle read, not a W9 position snapshot."],
     });
   }

@@ -9,6 +9,15 @@ import { ApiError, type BridgeFeed, type IntegrationState, type Label, type Data
 export const fmtNum = (n: number | null | undefined, d = 2) =>
   n == null ? "—" : n.toLocaleString("en-IN", { minimumFractionDigits: d, maximumFractionDigits: d });
 export const fmtInt = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString("en-IN"));
+/** Signed percentage with a true minus sign, two decimals: "+1.16%", "−0.24%". */
+export const fmtPct = (n: number | null | undefined, d = 2) =>
+  n == null || !Number.isFinite(n) ? "—" : `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(n).toFixed(d)}%`;
+/** Percentage change coloured up/down; renders nothing when the inputs are missing. */
+export const Change: FC<{ from: number | null | undefined; to: number | null | undefined; className?: string; suffix?: string }> = ({ from, to, className, suffix }) => {
+  if (from == null || to == null || from === 0) return null;
+  const ch = ((to - from) / from) * 100;
+  return <span className={`${ch > 0 ? "up" : ch < 0 ? "down" : "muted"}${className ? ` ${className}` : ""}`}>{fmtPct(ch)}{suffix ?? ""}</span>;
+};
 export function fmtDur(s: number | null | undefined): string {
   if (s == null) return "—";
   if (s < 60) return `${Math.round(s)}s`;
@@ -88,6 +97,38 @@ export const Empty: FC<{ title: string; children?: ReactNode; tone?: "warn" | "e
 
 // --- data loading ----------------------------------------------------------------
 /** Load + periodic refresh (0 = manual only). Errors are kept separate from data. */
+/**
+ * useState backed by sessionStorage: view state (filters, tabs) survives
+ * navigating away and back within the session. Falls back to plain state when
+ * storage is unavailable.
+ */
+export function useSessionState<T>(key: string, initial: T): [T, (v: T | ((p: T) => T)) => void] {
+  const [v, setV] = useState<T>(() => {
+    try { const s = sessionStorage.getItem(key); return s === null ? initial : (JSON.parse(s) as T); } catch { return initial; }
+  });
+  const set = useCallback((next: T | ((p: T) => T)) => {
+    setV((prev) => {
+      const val = typeof next === "function" ? (next as (p: T) => T)(prev) : next;
+      try { sessionStorage.setItem(key, JSON.stringify(val)); } catch { /* storage unavailable */ }
+      return val;
+    });
+  }, [key]);
+  return [v, set];
+}
+
+/** True while a CSS media query matches (e.g. phone layouts that render different markup). */
+export function useMediaQuery(q: string): boolean {
+  const [m, setM] = useState(() => (typeof window !== "undefined" && window.matchMedia ? window.matchMedia(q).matches : false));
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia(q);
+    const on = () => setM(mq.matches);
+    on(); mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, [q]);
+  return m;
+}
+
 export function useLoad<T>(load: () => Promise<T>, refreshSeconds = 0, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);

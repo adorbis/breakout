@@ -11,7 +11,7 @@ import {
 } from "./api.ts";
 import { navigate, useRoute } from "./router.ts";
 import {
-  ContextMenuProvider, Drawer, Dropdown, Empty, Modal, Splitter, StateChip, ToastProvider, Tone, ago, fmtWhen, useLoad, useToast, DataStateBadge,
+  ContextMenuProvider, Drawer, Dropdown, Empty, Modal, Splitter, StateChip, ToastProvider, Tone, ago, fmtWhen, useLoad, useToast, DataStateBadge, Change, fmtNum,
 } from "./ui.tsx";
 import { DashboardView, MarketView, PositionsPage, ScannerView, type Nav } from "./views/Intel.tsx";
 import { InstrumentWorkspace } from "./views/Workspace.tsx";
@@ -120,11 +120,10 @@ const QuoteCell: FC<{ exchange: string; symbol: string }> = ({ exchange, symbol 
   if (!q.data) return <span className="muted small">…</span>;
   if (q.data.state !== "ok") return <span className="muted small" title={q.data.reason}>n/a</span>;
   const d = q.data.data;
-  const ch = d.ltp !== null && d.prev_close ? ((d.ltp - d.prev_close) / d.prev_close) * 100 : null;
   return (
     <span className="wl-q" title={q.data.data_state?.detail}>
-      <b>{d.ltp !== null ? d.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}</b>
-      {ch !== null && <span className={ch >= 0 ? "up small" : "down small"}>{ch >= 0 ? "+" : ""}{ch.toFixed(2)}%</span>}
+      <b>{fmtNum(d.ltp)}</b>
+      <Change from={d.prev_close} to={d.ltp} className="small" />
       <DataStateBadge s={q.data.data_state} compact />
     </span>
   );
@@ -290,7 +289,7 @@ const Shell: FC<{ user: User; onLogout: () => void }> = ({ user, onLogout }) => 
     case "chart": body = <ChartView prefs={prefs} savePrefs={savePrefs} focus={instrument} pick={(cb) => openPalette(cb)} />; break;
     case "watchlists": body = <div className="view"><WatchlistsView nav={nav} /></div>; break;
     case "alerts": body = <AlertsView minPriority={prefs.alert_min_priority} onMinPriority={(n) => savePrefs({ alert_min_priority: n })} onBadges={badges.refresh} />; break;
-    case "copilot": body = <CopilotView config={config} instrument={instrument} askAbout={askAbout} historyWidth={prefs.panel_sizes.chat_history ?? 280} onHistoryWidth={(n) => savePrefs({ panel_sizes: { ...prefs.panel_sizes, chat_history: n } })} />; break;
+    case "copilot": body = <CopilotView config={config} instrument={instrument} askAbout={askAbout} historyWidth={prefs.panel_sizes.chat_history ?? 280} onHistoryWidth={(n) => savePrefs({ panel_sizes: { ...prefs.panel_sizes, chat_history: n } })} onAnalyse={(i) => nav.analysis(i)} />; break;
     case "notifications": body = <NotificationsView onBadges={badges.refresh} onOpenAlerts={() => go("alerts")} />; break;
     case "profile": body = <ProfileView onProfile={setProfile} />; break;
     case "settings": body = <div className="view"><SettingsView username={user.username} config={config} preferences={prefs} onPreferences={setPrefs} onLogout={onLogout} /></div>; break;

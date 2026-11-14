@@ -97,7 +97,7 @@ export const WatchlistsView: FC<{ nav: Nav; onListsChanged?: () => void }> = ({ 
   }, [active, filter, apply]);
   const rowMenu = (e: React.MouseEvent, i: { exchange: string; symbol: string; id: string }) => openMenu(e, [
     { label: "Open chart", onSelect: () => nav.chart(i) },
-    { label: "Trade analysis", onSelect: () => nav.analysis(i) },
+    { label: "Instrument analysis", onSelect: () => nav.analysis(i) },
     { label: "Ask AI about this", onSelect: () => nav.ask(i) },
     { label: `Remove from ${active?.name ?? "list"}`, danger: true, onSelect: () => active && run("remove the instrument", () => api.removeWatchlistItem(active.id, i.id), `Removed ${i.symbol}`) },
   ]);

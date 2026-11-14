@@ -9,7 +9,7 @@ import {
   type InstrumentDetail, type Preferences, type QuoteResult,
 } from "../api.ts";
 import { ChartPane } from "../Chart.tsx";
-import { BridgeState, DataStateBadge, Empty, LabelBadge, Panel, Tone, ago, fmtInt, fmtNum, fmtWhen, useLoad } from "../ui.tsx";
+import { BridgeState, Change, DataStateBadge, fmtPct, Empty, LabelBadge, Panel, Tone, ago, fmtInt, fmtNum, fmtWhen, useLoad } from "../ui.tsx";
 import { NextCandleCard, type Nav } from "./Intel.tsx";
 import { loadScanner } from "./feeds.ts";
 import { SaveAnalysisButton, SavedAnalysesPanel } from "./SavedAnalyses.tsx";
@@ -84,7 +84,7 @@ export const InstrumentWorkspace: FC<{
           <h2>{instrument.symbol} <span className="muted">{instrument.exchange}</span></h2>
           <div className="ws-quote">
             {quote.data?.state === "ok" ? <><b className="ws-ltp">{fmtNum(quote.data.data.ltp)}</b>
-              {quote.data.data.ltp !== null && quote.data.data.prev_close ? (() => { const ch = ((quote.data.data.ltp - quote.data.data.prev_close) / quote.data.data.prev_close) * 100; return <span className={ch >= 0 ? "up" : "down"}>{ch >= 0 ? "+" : ""}{ch.toFixed(2)}%</span>; })() : null}
+              <Change from={quote.data.data.prev_close} to={quote.data.data.ltp} />
               <DataStateBadge s={quote.data.data_state} /><span className="muted small">OpenAlgo · read {ago(quote.data.data.as_of)}</span></>
               : <><DataStateBadge s={quote.data?.data_state ?? null} /><span className="muted small">{quote.data ? quote.data.reason : "Loading quote…"}</span></>}
           </div>
@@ -120,7 +120,7 @@ export const InstrumentWorkspace: FC<{
             {!a ? <div className="loading-inline">Loading…</div> : !s ? <Empty title="No candles">{a.reason ?? "No market data is available for this instrument."}</Empty> : <>
               {!a.factual && <p className="ws-warn" role="note">{a.source === "demo" ? "DEMO candles: these levels illustrate the method only. They are not market evidence and are never given to the AI." : "Not market evidence."}</p>}
               <div className="kv">
-                <div><span className="k">Last close</span><b>{fmtNum(s.last_close)}</b>{s.bar_change_pct !== null && <span className={`small ${s.bar_change_pct >= 0 ? "up" : "down"}`}>{s.bar_change_pct >= 0 ? "+" : ""}{s.bar_change_pct}% vs previous bar</span>}</div>
+                <div><span className="k">Last close</span><b>{fmtNum(s.last_close)}</b>{s.bar_change_pct !== null && <span className={`small ${s.bar_change_pct > 0 ? "up" : s.bar_change_pct < 0 ? "down" : "muted"}`}>{fmtPct(s.bar_change_pct)} vs previous bar</span>}</div>
                 <div><span className="k">Range position ({s.levels.lookback} bars)</span>{POS[s.range_position]}{s.levels.rangeHigh !== null && <span className="muted small">{fmtNum(s.levels.rangeLow)} – {fmtNum(s.levels.rangeHigh)}</span>}</div>
                 <div><span className="k">Swing sequence</span>{SEQ[s.swing_sequence]}</div>
                 <div><span className="k">Volume vs {s.levels.lookback}-bar avg</span>{s.volume_ratio !== null ? `${s.volume_ratio}×` : "—"}</div>
@@ -133,7 +133,7 @@ export const InstrumentWorkspace: FC<{
                     ...(s.levels.rangeLow !== null ? [{ label: `${s.levels.lookback}-bar low (breakdown)`, p: s.levels.rangeLow, cls: "" }] : []),
                     ...s.levels.support.map((p, k) => ({ label: `Support ${k + 1}`, p, cls: "up" }))].map((r) => (
                     <tr key={r.label}><td className={r.cls}>{r.label}</td><td className="num">{fmtNum(r.p)}</td>
-                      <td className="num muted">{s.last_close ? `${(((r.p - s.last_close) / s.last_close) * 100).toFixed(2)}%` : "—"}</td></tr>))}
+                      <td className="num muted">{s.last_close ? fmtPct(((r.p - s.last_close) / s.last_close) * 100) : "—"}</td></tr>))}
                   {s.levels.resistance.length + s.levels.support.length === 0 && <tr><td colSpan={3} className="muted">No swing levels in view.</td></tr>}
                 </tbody>
               </table>
