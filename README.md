@@ -17,6 +17,15 @@ Breakout is the trader-facing workspace around the existing TradeOS decision aut
 
 This branch bootstraps the repository with selected, attributed reference implementations and technical assessments from three upstream repositories. It does not contain a production Breakout application implementation.
 
+## Trading Copilot (first module)
+
+`frontend/` (assistant-ui, React) and `backend/` (Hono, AI SDK v7, SQLite) form the Trading Copilot. It's a chat assistant powered by the Adorbis AI Gateway. All trading-system tools are disabled in this release. See [the architecture](docs/architecture/TRADING_COPILOT.md), [deployment and rollback](docs/deployment/COPILOT_DEPLOYMENT.md) and [dependencies](docs/THIRD_PARTY_DEPENDENCIES.md).
+
+```bash
+PATH=/docker/breakout/runtime/tooling/node/bin:$PATH   # Node 22 for development; the host Node is unchanged
+npm ci --ignore-scripts && npm run typecheck && npm test && npm run build
+```
+
 ## Start here
 
 1. [Repository import manifest](docs/REPOSITORY_IMPORT_MANIFEST.md)

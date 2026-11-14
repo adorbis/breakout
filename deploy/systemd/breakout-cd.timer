@@ -1,0 +1,10 @@
+[Unit]
+Description=Poll for approved Breakout releases every 5 minutes (enable only after owner approval)
+
+[Timer]
+OnActiveSec=2min
+OnUnitInactiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

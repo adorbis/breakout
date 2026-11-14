@@ -19,12 +19,12 @@ All Docker operations go through `scripts/breakoutctl`. The script runs `docker 
 | `build` / `start` / `stop` / `restart` | `compose build` / `up -d` / `stop` / `restart` |
 | `logs [svc]` | Last 200 log lines |
 | `status` | `compose ps -a` |
-| `health` | Container status plus an HTTP probe of `BREAKOUT_HEALTH_URL` |
+| `health` | Container status plus `GET http://127.0.0.1:$BREAKOUT_HOST_PORT/healthz` |
 | `backup` | Writes `runtime/backups/<UTC>/`: a Git bundle of all refs, the uncommitted diff, untracked files, `.env`, each `breakout`-labelled volume and `SHA256SUMS` |
 | `restore <dir> --yes` | Verifies checksums, requires Breakout stopped and restores only `breakout`-labelled volumes |
 | `git` | Branch, recent commits and submodule pin |
 
-Compose actions refuse to run until `compose.yaml` exists. The application's Compose file, Dockerfiles, volumes, ports and the private OpenAlgo path are designed and reviewed separately.
+`compose.yaml` and the `Dockerfile` are **candidates** for the Trading Copilot: one `copilot` service with the `copilot_data` volume and a loopback-only port. They are not built or started until the deployment review approves it ([COPILOT_DEPLOYMENT.md](COPILOT_DEPLOYMENT.md)). The private OpenAlgo path is designed and reviewed separately ([adapter design](../integrations/OPENALGO_ADAPTER_DESIGN.md)).
 
 ## Layout
 

@@ -1,0 +1,15 @@
+[Unit]
+Description=Breakout CD tick (deploy origin/feature/breakout-foundation to /docker/breakout, project breakout)
+After=docker.service network-online.target
+Requires=docker.service
+# Host identity is enforced by scripts/breakout-cd (runtime/cd/target.env, not committed).
+ConditionPathIsDirectory=/docker/breakout
+
+[Service]
+Type=oneshot
+Environment=HOME=/root
+ExecStart=/docker/breakout/scripts/breakout-cd tick
+TimeoutStartSec=1200
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

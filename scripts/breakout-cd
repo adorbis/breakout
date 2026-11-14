@@ -1,0 +1,475 @@
+#!/usr/bin/env bash
+# Breakout continuous deployment — pull-based, runs ON the VPS.
+#
+#   origin/feature/breakout-foundation → fetch → git archive <sha> (working tree untouched)
+#   → checks: app files, compose policy, compose hash approval, migration text guard
+#   → npm ci (network) then typecheck + tests (--network none), throwaway containers
+#   → docker build breakout-copilot:<sha12>   (versioned; old tags kept, never pruned)
+#   → ephemeral smoke of the new image (tmpfs data)
+#   → pre-deploy: live health, volume backup + consistent SQLite snapshot (verified)
+#   → migration rehearsal: new image boots on a COPY of the prod DB; schema/rows must be a superset
+#   → compose up (project breakout, dir /docker/breakout) → health, volume mapping, smoke
+#   → on failure: roll back to the previous tag; if none is healthy, STOP the service
+#   → record runtime/cd/releases.jsonl; notify (journal + runtime/cd/ALERT + optional ntfy)
+#
+#   breakout-cd validate [strict|bootstrap]  target checks only
+#   breakout-cd test [--worktree]            full pipeline minus production
+#   breakout-cd deploy [--bootstrap]         requires runtime/cd/APPROVED (+ approved compose hash)
+#   breakout-cd tick                         timer entry: deploy only if origin/<branch> moved
+#   breakout-cd rollback [<tag>]             redeploy a previous image tag
+#   breakout-cd approve-compose <release-id> pin the reviewed compose.yaml (operator action)
+#   breakout-cd retry <sha>                  clear a failed-commit marker
+#   breakout-cd drill [<tag>]                backup→wipe→restore drill on ephemeral data (no prod)
+#   breakout-cd releases                     history
+set -euo pipefail
+
+# ---- permanent deployment identity (change only with owner authorization) ----
+ROOT=/docker/breakout
+# The host pin is deployment-local and deliberately NOT committed (public repo).
+# $ROOT/runtime/cd/target.env (gitignored, chmod 600) must define:
+#   EXPECT_HOST=<hostname>
+#   EXPECT_MACHINE_ID=<first 12+ characters of /etc/machine-id>
+TARGET_ENV=${BREAKOUT_CD_TARGET_ENV:-$ROOT/runtime/cd/target.env}
+EXPECT_HOST="" EXPECT_MACHINE_ID=""
+if [[ -r "$TARGET_ENV" ]]; then
+  EXPECT_HOST=$(sed -n 's/^EXPECT_HOST=//p' "$TARGET_ENV" | tail -n1)
+  EXPECT_MACHINE_ID=$(sed -n 's/^EXPECT_MACHINE_ID=//p' "$TARGET_ENV" | tail -n1)
+fi
+PROJECT=breakout
+BRANCH=feature/breakout-foundation
+REMOTE_RE='[:/]adorbis/breakout(\.git)?$'
+SERVICE=copilot
+IMAGE_REPO=breakout-copilot
+VOLUME=${PROJECT}_copilot_data
+VOLUME_DEST=/data
+DB_IN_CONTAINER=/data/breakout.db
+# -------------------------------------------------------------------------------
+
+CD="$ROOT/runtime/cd"
+HEALTH_TIMEOUT=120
+DEPLOY_SHA=""          # set once a deploy has chosen its commit; failures then mark it
+NOTIFY_ON_EXIT=false
+
+ts()   { date -u +%Y-%m-%dT%H:%M:%SZ; }
+log()  { echo "$(ts) $*" | tee -a "$CD/deploy.log" >&2; }
+die()  {
+  log "FAIL: $*"
+  if [[ -n "$DEPLOY_SHA" && -d "$CD/failed" ]]; then touch "$CD/failed/$DEPLOY_SHA"; fi
+  exit 1
+}
+
+# Identity is checked BEFORE anything is written, so a wrong host or a missing
+# directory can never cause a new destination to be created.
+preflight_identity() {
+  [[ -n "$EXPECT_HOST" && ${#EXPECT_MACHINE_ID} -ge 12 ]] || { echo "breakout-cd: deployment identity not configured ($TARGET_ENV) — refusing" >&2; exit 1; }
+  [[ "$(hostname)" == "$EXPECT_HOST" ]] || { echo "breakout-cd: host is $(hostname), expected $EXPECT_HOST" >&2; exit 1; }
+  [[ "$(cut -c1-${#EXPECT_MACHINE_ID} /etc/machine-id)" == "$EXPECT_MACHINE_ID" ]] || { echo "breakout-cd: machine-id mismatch" >&2; exit 1; }
+  [[ -d "$ROOT/.git" ]] || { echo "breakout-cd: $ROOT missing or not a git checkout — refusing" >&2; exit 1; }
+}
+
+notify() {  # $1 level (ok|fail), $2 message — never fails the caller, never prints credentials
+  local level=$1 msg=$2 title="Breakout CD ${1^^} on ${EXPECT_HOST:-unconfigured-host}"
+  logger -t breakout-cd -p "user.$([[ $level == ok ]] && echo info || echo err)" -- "$title: $msg" 2>/dev/null || true
+  [[ $level == ok ]] && rm -f "$CD/ALERT" || echo "$(ts) $msg" >"$CD/ALERT"
+  [[ -f "$CD/notify.env" ]] || return 0
+  local NOTIFY_URL="" NOTIFY_TOKEN=""
+  # shellcheck disable=SC1091
+  source "$CD/notify.env"
+  [[ -n "$NOTIFY_URL" ]] || return 0
+  local auth=(); [[ -n "$NOTIFY_TOKEN" ]] && auth=(-H "Authorization: Bearer $NOTIFY_TOKEN")
+  curl -fsS -m 10 -o /dev/null "${auth[@]}" -H "Title: $title" \
+    -H "Priority: $([[ $level == ok ]] && echo default || echo high)" -H "Tags: breakout" \
+    --data-binary "$msg" "$NOTIFY_URL" 2>/dev/null || log "notify: delivery to NOTIFY_URL failed (alert kept in $CD/ALERT and journal)"
+}
+on_exit() {
+  local rc=$?
+  $NOTIFY_ON_EXIT || return 0
+  if ((rc != 0)); then
+    notify fail "$(grep 'FAIL:' "$CD/deploy.log" 2>/dev/null | tail -1 | cut -c1-300 || echo "exit $rc")"
+  fi
+}
+
+compose() {  # $1 = compose file, rest = args
+  local f=$1; shift
+  docker compose --project-directory "$ROOT" -p "$PROJECT" -f "$f" --env-file "${CD_ENV_FILE:-$ROOT/.env}" "$@"
+}
+project_containers() { docker ps -aq --filter "label=com.docker.compose.project=$PROJECT"; }
+service_container() {  # $1: -a for stopped too
+  docker ps ${1:-} -q --filter "label=com.docker.compose.project=$PROJECT" --filter "label=com.docker.compose.service=$SERVICE" | head -1
+}
+running_image() { local c; c=$(service_container); [[ -z "$c" ]] || docker inspect -f '{{.Config.Image}}' "$c"; }
+env_has() { grep -qE "^$1=.+" "$ROOT/.env"; }   # names only; never prints values
+host_port() { sed -nE 's/^BREAKOUT_HOST_PORT=([0-9]+)$/\1/p' "$ROOT/.env"; }
+
+# ---------------------------------------------------------------- validation
+validate_target() {
+  local mode=${1:-strict}
+  preflight_identity
+  git -C "$ROOT" remote get-url origin | grep -qE "$REMOTE_RE" || die "origin is not adorbis/breakout"
+  [[ -f "$ROOT/.env" ]] || die "$ROOT/.env missing"
+  if [[ $mode == test ]]; then log "target OK (test mode: .env keys not required)"; return 0; fi
+  local k missing=()
+  for k in BREAKOUT_HOST_PORT BREAKOUT_PUBLIC_ORIGIN BREAKOUT_COOKIE_SECURE; do env_has "$k" || missing+=("$k"); done
+  ((${#missing[@]} == 0)) || die "required .env keys missing: ${missing[*]}"
+  [[ -n "$(host_port)" ]] || die "BREAKOUT_HOST_PORT must be numeric"
+  if grep -qE '^COMPOSE_PROJECT_NAME=' "$ROOT/.env" && ! grep -qE "^COMPOSE_PROJECT_NAME=$PROJECT\$" "$ROOT/.env"; then
+    die ".env COMPOSE_PROJECT_NAME is not '$PROJECT'"
+  fi
+  grep -qE '^BREAKOUT_IMAGE=' "$ROOT/.env" && die ".env must not set BREAKOUT_IMAGE (CD owns the image tag)"
+  if docker volume inspect "$VOLUME" >/dev/null 2>&1; then
+    [[ "$(docker volume inspect -f '{{index .Labels "com.docker.compose.project"}}' "$VOLUME")" == "$PROJECT" ]] \
+      || die "volume $VOLUME exists but is not labelled project=$PROJECT"
+  fi
+  if [[ $mode == strict ]]; then
+    [[ -n "$(project_containers)" ]] || die "compose project '$PROJECT' has no containers (first deploy needs --bootstrap)"
+    check_volume_mapping || die "volume mapping differs from $VOLUME:$VOLUME_DEST"
+  elif [[ $mode == bootstrap ]]; then
+    [[ -z "$(project_containers)" ]] || die "--bootstrap refused: project '$PROJECT' already exists"
+    ss -Hltn "sport = :$(host_port)" | grep -q . && die "BREAKOUT_HOST_PORT $(host_port) is already in use on this host"
+  fi
+  log "target OK: host=$EXPECT_HOST dir=$ROOT project=$PROJECT branch=$BRANCH mode=$mode"
+}
+
+check_volume_mapping() {
+  local c m; c=$(service_container -a)
+  [[ -n "$c" ]] || return 1
+  m=$(docker inspect -f '{{range .Mounts}}{{.Type}}:{{.Name}}:{{.Destination}} {{end}}' "$c")
+  [[ " $m " == *" volume:$VOLUME:$VOLUME_DEST "* ]] || { log "mounts: $m"; return 1; }
+  [[ "$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$c")" == "$ROOT" ]] \
+    || { log "container working_dir is not $ROOT"; return 1; }
+}
+
+# ---------------------------------------------------------------- source
+fetch_origin() {
+  git -C "$ROOT" fetch --quiet origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" \
+    || die "git fetch origin $BRANCH failed"
+  git -C "$ROOT" rev-parse "refs/remotes/origin/$BRANCH"
+}
+export_commit() {  # clean tree of <sha> → $CD/releases/<sha12>; prints the id
+  local sha=$1 rel="$CD/releases/${1:0:12}"
+  rm -rf "$rel.tmp"; mkdir -p "$rel.tmp"
+  git -C "$ROOT" archive --format=tar "$sha" | tar -x -C "$rel.tmp"
+  rm -rf "$rel"; mv "$rel.tmp" "$rel"; echo "${sha:0:12}"
+}
+export_worktree() {  # TEST ONLY: tracked + untracked, non-ignored files
+  local tmp="$CD/releases/wt.tmp" id
+  rm -rf "$tmp"; mkdir -p "$tmp"
+  git -C "$ROOT" ls-files -co --exclude-standard -z | tar -C "$ROOT" --null -T - -cf - | tar -x -C "$tmp"
+  id="wt-$( (cd "$tmp" && find . -type f -print0 | sort -z | xargs -0 sha256sum) | sha256sum | cut -c1-8)"
+  rm -rf "$CD/releases/$id"; mv "$tmp" "$CD/releases/$id"; echo "$id"
+}
+
+# ---------------------------------------------------------------- stages
+compose_policy() {  # $1 release dir. The pushed compose.yaml must not be able to escape the sandbox.
+  local rel=$1
+  printf 'BREAKOUT_HOST_PORT=1\nBREAKOUT_PUBLIC_ORIGIN=http://127.0.0.1\nBREAKOUT_COOKIE_SECURE=false\n' >"$CD/policy.env"
+  CD_ENV_FILE="$CD/policy.env" BREAKOUT_IMAGE="$IMAGE_REPO:policy" compose "$rel/compose.yaml" config --no-env-resolution --format json 2>>"$CD/deploy.log" \
+  | python3 -c '
+import json, sys
+c = json.load(sys.stdin); bad = []
+if c.get("name") != "breakout": bad.append("project name")
+svcs = c.get("services", {})
+if set(svcs) != {"copilot"}: bad.append("services must be exactly [copilot]: %s" % sorted(svcs))
+for n, s in svcs.items():
+    for k in ("privileged", "pid", "ipc", "cap_add", "devices", "network_mode", "userns_mode", "cgroup_parent", "volumes_from", "extra_hosts"):
+        if s.get(k): bad.append("%s.%s not allowed" % (n, k))
+    if any("unconfined" in o or "disable" in o for o in (s.get("security_opt") or [])): bad.append(n + ".security_opt weakens isolation")
+    if s.get("read_only") is not True: bad.append(n + ".read_only must be true")
+    if "ALL" not in (s.get("cap_drop") or []): bad.append(n + ".cap_drop must include ALL")
+    for p in s.get("ports", []):
+        if p.get("host_ip") != "127.0.0.1": bad.append("%s port not loopback-only" % n)
+    for v in s.get("volumes", []):
+        if v.get("type") != "volume" or v.get("source") != "copilot_data" or v.get("target") != "/data":
+            bad.append("%s mount %s:%s not allowed" % (n, v.get("type"), v.get("target")))
+    if (s.get("image") or "") != "breakout-copilot:policy": bad.append(n + ".image must be ${BREAKOUT_IMAGE}")
+    for net in (s.get("networks") or {}):
+        if net != "default": bad.append("%s joins network %s" % (n, net))
+for net, d in (c.get("networks") or {}).items():
+    if d.get("external"): bad.append("external network " + net)
+for vol, d in (c.get("volumes") or {}).items():
+    if d.get("external"): bad.append("external volume " + vol)
+if bad: print("; ".join(bad)); sys.exit(1)
+' >>"$CD/deploy.log" 2>&1 || die "compose.yaml violates the deployment policy (see deploy.log)"
+  log "compose policy: OK"
+}
+
+stage_checks() {  # $1 release dir, $2 enforce compose approval (yes|no)
+  local rel=$1 f
+  for f in Dockerfile compose.yaml package.json package-lock.json backend/src/server.ts backend/src/db.ts; do
+    [[ -f "$rel/$f" ]] || die "release lacks $f (is the app code committed and pushed?)"
+  done
+  compose_policy "$rel"
+  if [[ ${2:-yes} == yes ]]; then
+    # Not a commit failure: once the operator approves, the next tick proceeds without `retry`.
+    [[ -f "$CD/compose.approved.sha256" ]] || DEPLOY_SHA="" die "no approved compose.yaml (run: breakout-cd approve-compose <release-id>)"
+    [[ "$(sha256sum <"$rel/compose.yaml" | cut -d' ' -f1)" == "$(cat "$CD/compose.approved.sha256")" ]] \
+      || DEPLOY_SHA="" die "compose.yaml differs from the approved one — review, then: breakout-cd approve-compose ${rel##*/}"
+  fi
+  # Fast text guard; the real gates are backend/test/migrations.test.ts and the rehearsal below.
+  if sed -n '/const MIGRATIONS/,/^];/p' "$rel/backend/src/db.ts" | grep -qiE 'DROP[[:space:]]+(TABLE|COLUMN|INDEX)|RENAME|DELETE[[:space:]]+FROM'; then
+    die "release contains a potentially destructive migration — manual review required"
+  fi
+}
+
+stage_test() {  # deps with network, then typecheck + tests with --network none
+  local rel=$1 node work="$CD/work"
+  node=$(sed -nE 's/^ARG NODE_IMAGE=(.*)$/\1/p' "$rel/Dockerfile" | head -1)
+  [[ -n "$node" ]] || die "cannot read NODE_IMAGE from Dockerfile"
+  rm -rf "$work"; cp -a "$rel" "$work"
+  log "tests: npm ci (network) → typecheck + npm test (--network none)"
+  docker run --rm -v "$work:/w" -w /w "$node" npm ci --ignore-scripts --no-audit --no-fund >>"$CD/deploy.log" 2>&1 \
+    || die "npm ci failed (see deploy.log)"
+  docker run --rm --network none -v "$work:/w" -w /w "$node" sh -ec 'npm run typecheck >/dev/null && npm test' >>"$CD/deploy.log" 2>&1 \
+    || die "tests failed (see deploy.log)"
+  rm -rf "$work"
+  log "tests: PASS ($(grep -E '^# pass' "$CD/deploy.log" | tail -1))"
+}
+
+stage_build() {  # $1 rel, $2 tag, $3 revision
+  log "build: $IMAGE_REPO:$2"
+  docker build -q -t "$IMAGE_REPO:$2" \
+    --label "org.opencontainers.image.revision=$3" \
+    --label "org.opencontainers.image.source=https://github.com/adorbis/breakout" \
+    --label "breakout.branch=$BRANCH" "$1" >>"$CD/deploy.log" 2>&1 || die "docker build failed (see deploy.log)"
+}
+
+wait_healthy() {  # $1 container
+  local c=$1 i s=""
+  for ((i = 0; i < HEALTH_TIMEOUT; i += 3)); do
+    s=$(docker inspect -f '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$c" 2>/dev/null || echo gone/)
+    case $s in running/healthy) return 0 ;; exited/*|dead/*|gone/*|*/unhealthy) log "container state: $s"; return 1 ;; esac
+    sleep 3
+  done
+  log "container not healthy after ${HEALTH_TIMEOUT}s ($s)"; return 1
+}
+
+smoke() {  # $1 base url
+  local u=$1 body code
+  body=$(curl -fsS -m 5 "$u/healthz") || { log "smoke: /healthz unreachable"; return 1; }
+  [[ "$body" == *'"ok":true'* ]] || { log "smoke: /healthz body unexpected"; return 1; }
+  code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 "$u/")
+  [[ "$code" == 200 ]] || { log "smoke: GET / → $code"; return 1; }
+  code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 "$u/api/me")
+  [[ "$code" == 401 ]] || { log "smoke: GET /api/me unauthenticated → $code (want 401)"; return 1; }
+  log "smoke: PASS ($u)"
+}
+
+ephemeral_run() {  # $1 tag, $2 optional host data dir (else tmpfs). Boots standalone (no compose), smokes, stops.
+  local tag=$1 data=${2:-} name="breakout-cd-eph-$$" port rc=0 mount
+  if [[ -n "$data" ]]; then chown -R 1000:1000 "$data"; mount=(-v "$data:$VOLUME_DEST"); else mount=(--tmpfs "$VOLUME_DEST:uid=1000,gid=1000,mode=700"); fi
+  docker run -d --name "$name" -p 127.0.0.1::8787 --read-only --tmpfs /tmp "${mount[@]}" \
+    --cap-drop ALL --security-opt no-new-privileges:true \
+    -e BREAKOUT_PUBLIC_ORIGIN=http://127.0.0.1 -e BREAKOUT_COOKIE_SECURE=false \
+    "$IMAGE_REPO:$tag" >/dev/null || return 1
+  port=$(docker port "$name" 8787/tcp | head -1 | sed 's/.*://')
+  { wait_healthy "$name" && smoke "http://127.0.0.1:$port"; } || rc=1
+  ((rc == 0)) || docker logs --tail 30 "$name" >>"$CD/deploy.log" 2>&1
+  docker stop -t 10 "$name" >/dev/null 2>&1 || true
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  return $rc
+}
+
+dbcheck() {  # run scripts/cd-db-check.mjs (operator copy) inside image $1, data dir $2 at /w; rest = args
+  local tag=$1 dir=$2; shift 2
+  docker run --rm -i --network none --user 0 -v "$dir:/w" --entrypoint node "$IMAGE_REPO:$tag" \
+    --disable-warning=ExperimentalWarning --input-type=module - "$@" <"$ROOT/scripts/cd-db-check.mjs"
+}
+
+db_snapshot_live() {  # consistent copy of the live DB → $1/breakout.db.snapshot ; prints describe JSON
+  local dest=$1 c; c=$(service_container)
+  [[ -n "$c" ]] || return 1
+  docker exec -i "$c" node --disable-warning=ExperimentalWarning --input-type=module - snapshot "$DB_IN_CONTAINER" /tmp/cd-snap.db \
+    <"$ROOT/scripts/cd-db-check.mjs" >"$dest/snapshot.describe.json" || return 1
+  docker exec "$c" cat /tmp/cd-snap.db >"$dest/breakout.db.snapshot" && docker exec "$c" rm -f /tmp/cd-snap.db
+}
+
+pre_backup() {  # sets BACKUP_DIR
+  BACKUP_DIR=""
+  docker volume inspect "$VOLUME" >/dev/null 2>&1 || { log "backup: no $VOLUME yet (bootstrap) — skipped"; return 0; }
+  local out; out=$("$ROOT/scripts/breakoutctl" backup 2>>"$CD/deploy.log") || die "pre-deploy backup failed"
+  BACKUP_DIR=${out#backup: }
+  [[ -s "$BACKUP_DIR/vol-$VOLUME.tgz" ]] || die "backup lacks vol-$VOLUME.tgz"
+  tar -tzf "$BACKUP_DIR/vol-$VOLUME.tgz" >/dev/null || die "backup volume archive unreadable"
+  if [[ -n "$(service_container)" ]]; then
+    db_snapshot_live "$BACKUP_DIR" || die "consistent DB snapshot failed"
+    (cd "$BACKUP_DIR" && sha256sum breakout.db.snapshot snapshot.describe.json >>SHA256SUMS)
+  fi
+  (cd "$BACKUP_DIR" && sha256sum -c --quiet SHA256SUMS) || die "backup checksum verification failed"
+  log "backup: verified $BACKUP_DIR"
+}
+
+migration_rehearsal() {  # $1 new tag. Boots the new image on a COPY of the snapshot; schema/rows must only grow.
+  local tag=$1 r="$CD/rehearsal"
+  [[ -n "${BACKUP_DIR:-}" && -f "$BACKUP_DIR/breakout.db.snapshot" ]] || { log "rehearsal: no production DB yet — skipped"; return 0; }
+  rm -rf "$r"; mkdir -p "$r/data"
+  cp "$BACKUP_DIR/breakout.db.snapshot" "$r/data/breakout.db"
+  dbcheck "$tag" "$r" describe /w/data/breakout.db >"$r/before.json" || die "rehearsal: cannot read snapshot"
+  ephemeral_run "$tag" "$r/data" || die "rehearsal: new image failed to boot on a copy of production data"
+  dbcheck "$tag" "$r" describe /w/data/breakout.db >"$r/after.json" || die "rehearsal: cannot read migrated copy"
+  dbcheck "$tag" "$r" compare /w/before.json /w/after.json >>"$CD/deploy.log" 2>&1 \
+    || die "rehearsal: migration is not additive on production data (see deploy.log)"
+  log "rehearsal: PASS ($(tail -1 "$CD/deploy.log" | cut -c1-120))"
+  rm -rf "$r"
+}
+
+compose_up() {  # $1 compose file, $2 image tag
+  BREAKOUT_IMAGE="$IMAGE_REPO:$2" compose "$1" up -d --no-build --wait --wait-timeout "$HEALTH_TIMEOUT" "$SERVICE" >>"$CD/deploy.log" 2>&1
+}
+compose_stop() { BREAKOUT_IMAGE="$IMAGE_REPO:${2:-none}" compose "$1" stop "$SERVICE" >>"$CD/deploy.log" 2>&1; }
+
+verify_live() {
+  local c; c=$(service_container)
+  [[ -n "$c" ]] || { log "verify: no running $SERVICE container"; return 1; }
+  wait_healthy "$c" || return 1
+  check_volume_mapping || return 1
+  smoke "http://127.0.0.1:$(host_port)"
+}
+
+record() {  # sha tag previous result
+  printf '{"ts":"%s","commit":"%s","image":"%s:%s","previous":"%s","result":"%s"}\n' \
+    "$(ts)" "$1" "$IMAGE_REPO" "$2" "$3" "$4" >>"$CD/releases.jsonl"
+}
+
+# ---------------------------------------------------------------- commands
+cmd_test() {
+  validate_target test
+  local id rel rev
+  if [[ "${1:-}" == --worktree ]]; then
+    id=$(export_worktree); rev="worktree:$(git -C "$ROOT" rev-parse HEAD)+uncommitted"
+  else
+    rev=$(fetch_origin); id=$(export_commit "$rev")
+  fi
+  rel="$CD/releases/$id"
+  log "test: source=$rev id=$id (no production change)"
+  stage_checks "$rel" no
+  stage_test "$rel"; stage_build "$rel" "$id" "$rev"
+  ephemeral_run "$id" || die "ephemeral smoke failed for $IMAGE_REPO:$id"
+  log "test: PASS $IMAGE_REPO:$id"
+}
+
+cmd_deploy() {
+  local mode=strict
+  [[ "${1:-}" == --bootstrap ]] && mode=bootstrap
+  [[ -f "$CD/APPROVED" ]] || die "deploys are not approved yet (create $CD/APPROVED after owner sign-off)"
+  validate_target "$mode"
+  local sha id rel prev
+  sha=$(fetch_origin); DEPLOY_SHA=$sha
+  id=$(export_commit "$sha"); rel="$CD/releases/$id"
+  prev=$(running_image)
+  log "deploy: $BRANCH@$sha → $IMAGE_REPO:$id (previous: ${prev:-none})"
+  if [[ -n "$prev" ]]; then
+    if verify_live; then log "pre-deploy health: OK"; else log "pre-deploy health: NOT OK (continuing; verified after)"; fi
+  fi
+  stage_checks "$rel" yes
+  stage_test "$rel"; stage_build "$rel" "$id" "$sha"
+  ephemeral_run "$id" || die "pre-deploy smoke failed; production untouched"
+  pre_backup
+  migration_rehearsal "$id"
+  if compose_up "$rel/compose.yaml" "$id" && verify_live; then
+    echo "$id $sha" >"$CD/current"; [[ -z "$prev" ]] || echo "${prev#"$IMAGE_REPO":}" >"$CD/previous"
+    cp "$rel/compose.yaml" "$CD/compose.current.yaml"
+    record "$sha" "$id" "$prev" deployed; log "deploy: SUCCESS $IMAGE_REPO:$id"
+    notify ok "deployed $IMAGE_REPO:$id ($sha)"
+    return 0
+  fi
+  if [[ -n "$prev" && -f "$CD/compose.current.yaml" ]]; then
+    log "deploy: FAILED — rolling back to $prev"
+    if compose_up "$CD/compose.current.yaml" "${prev#"$IMAGE_REPO":}" && verify_live; then
+      record "$sha" "$id" "$prev" rolled_back; die "deploy of $id failed; rolled back to $prev (healthy)"
+    fi
+    record "$sha" "$id" "$prev" rollback_failed
+  else
+    record "$sha" "$id" "${prev:-}" failed_no_previous
+  fi
+  compose_stop "$rel/compose.yaml" "$id" || true
+  die "deploy of $id failed and no healthy release could be restored — $SERVICE STOPPED (not left unhealthy)"
+}
+
+cmd_tick() {
+  [[ -f "$CD/APPROVED" ]] || { echo "breakout-cd: not approved; tick is a no-op"; return 0; }
+  local sha cur
+  sha=$(fetch_origin); cur=$(awk '{print $2}' "$CD/current" 2>/dev/null || true)
+  [[ "$sha" == "$cur" ]] && return 0
+  [[ -e "$CD/failed/$sha" ]] && { echo "breakout-cd: $sha failed before; waiting for a new commit (or: breakout-cd retry $sha)"; return 0; }
+  cmd_deploy
+}
+
+cmd_rollback() {
+  validate_target strict
+  local tag=${1:-} prev rev
+  [[ -n "$tag" ]] || tag=$(cat "$CD/previous" 2>/dev/null || true)
+  [[ -n "$tag" ]] || die "no previous release recorded"
+  docker image inspect "$IMAGE_REPO:$tag" >/dev/null 2>&1 || die "image $IMAGE_REPO:$tag not present"
+  [[ -f "$CD/compose.current.yaml" ]] || die "no recorded compose file"
+  prev=$(running_image)
+  log "rollback: ${prev:-none} → $IMAGE_REPO:$tag"
+  { compose_up "$CD/compose.current.yaml" "$tag" && verify_live; } || die "rollback to $tag failed health"
+  rev=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE_REPO:$tag")
+  echo "$tag $rev" >"$CD/current"; [[ -z "$prev" ]] || echo "${prev#"$IMAGE_REPO":}" >"$CD/previous"
+  record "$rev" "$tag" "$prev" rollback; log "rollback: SUCCESS $IMAGE_REPO:$tag"
+  notify ok "rolled back to $IMAGE_REPO:$tag"
+}
+
+cmd_approve_compose() {
+  local rel="$CD/releases/${1:?usage: approve-compose <release-id>}"
+  [[ -f "$rel/compose.yaml" ]] || die "no release $1"
+  compose_policy "$rel"
+  sha256sum <"$rel/compose.yaml" | cut -d' ' -f1 >"$CD/compose.approved.sha256"
+  log "compose approved: $(cat "$CD/compose.approved.sha256") from release $1"
+}
+
+cmd_drill() {  # backup/restore drill using the exact breakoutctl tar commands, on ephemeral data only
+  validate_target test
+  local tag=${1:-$(awk '{print $1}' "$CD/current" 2>/dev/null)} d="$CD/drill" n
+  [[ -n "$tag" ]] && docker image inspect "$IMAGE_REPO:$tag" >/dev/null 2>&1 || die "drill needs an image tag"
+  rm -rf "$d"; mkdir -p "$d/data" "$d/backup"; chown -R 1000:1000 "$d/data"
+  log "drill: seed data with $IMAGE_REPO:$tag"
+  printf 'drill-password-%s\n' "$$" | docker run --rm -i --network none -v "$d/data:/data" -e BREAKOUT_DB_PATH=$DB_IN_CONTAINER \
+    "$IMAGE_REPO:$tag" node --disable-warning=ExperimentalWarning backend/src/cli.ts create-user drilluser >>"$CD/deploy.log" 2>&1 \
+    || die "drill: seeding failed"
+  dbcheck "$tag" "$d" snapshot /w/data/breakout.db /w/backup/breakout.db.snapshot >"$d/before.json" || die "drill: snapshot failed"
+  docker run --rm -v "$d/data:/v:ro" -v "$d/backup:/b" alpine:3.20 tar -C /v -czf /b/vol.tgz . || die "drill: volume tar failed"
+  (cd "$d/backup" && sha256sum -- * >SHA256SUMS && sha256sum -c --quiet SHA256SUMS) || die "drill: checksum failed"
+  docker run --rm -v "$d/data:/v" alpine:3.20 find /v -mindepth 1 -delete
+  [[ -z "$(ls -A "$d/data")" ]] || die "drill: wipe failed"
+  docker run --rm -v "$d/data:/v" -v "$d/backup:/b:ro" alpine:3.20 sh -c 'find /v -mindepth 1 -delete && tar -C /v -xzf /b/vol.tgz' \
+    || die "drill: volume restore failed"
+  ephemeral_run "$tag" "$d/data" || die "drill: app failed to boot on restored volume"
+  dbcheck "$tag" "$d" describe /w/data/breakout.db >"$d/after.json"
+  dbcheck "$tag" "$d" compare /w/before.json /w/after.json >>"$CD/deploy.log" 2>&1 || die "drill: restored data differs"
+  n=$(grep -o '"users":[0-9]*' "$d/after.json"); [[ "$n" == '"users":1' ]] || die "drill: expected 1 user, got $n"
+  # Also prove the consistent snapshot alone is restorable.
+  rm -rf "$d/data2"; mkdir -p "$d/data2"; cp "$d/backup/breakout.db.snapshot" "$d/data2/breakout.db"
+  ephemeral_run "$tag" "$d/data2" || die "drill: app failed to boot on restored snapshot"
+  log "drill: PASS (volume tar restore + snapshot restore, users=1, integrity ok)"
+  rm -rf "$d"
+}
+
+main() {
+  local cmd=${1:-}
+  case "$cmd" in validate|test|deploy|tick|rollback|approve-compose|retry|drill|releases) ;; *)
+    sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  esac
+  preflight_identity
+  umask 077
+  mkdir -p "$CD/releases" "$CD/failed"
+  exec 9>"$CD/lock"
+  if ! flock -n 9; then echo "breakout-cd: another run holds the lock" >&2; [[ $cmd == tick ]] && exit 0; exit 75; fi
+  case "$cmd" in deploy|tick|rollback) NOTIFY_ON_EXIT=true; trap on_exit EXIT; trap 'exit 143' TERM INT ;; esac
+  shift
+  case "$cmd" in
+    validate) validate_target "${1:-strict}" ;;
+    test)     cmd_test "$@" ;;
+    deploy)   cmd_deploy "$@" ;;
+    tick)     cmd_tick ;;
+    rollback) cmd_rollback "$@" ;;
+    approve-compose) cmd_approve_compose "$@" ;;
+    retry)    rm -f "$CD/failed/${1:?usage: retry <sha>}"; echo "cleared $1" ;;
+    drill)    cmd_drill "$@" ;;
+    releases) cat "$CD/releases.jsonl" 2>/dev/null || true; echo "current: $(cat "$CD/current" 2>/dev/null || echo none)"
+              docker images "$IMAGE_REPO" --format '{{.Tag}} {{.CreatedSince}}' ;;
+  esac
+}
+
+# Library mode: `source breakout-cd` defines functions only (used by scripts/test/breakout-cd.test.sh).
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi

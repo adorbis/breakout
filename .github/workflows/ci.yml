@@ -1,0 +1,27 @@
+# CI only. Deployment is pull-based on the VPS (scripts/breakout-cd), so no VPS
+# credentials live in GitHub. Action tags are not SHA-pinned yet (see readiness report).
+name: ci
+on:
+  push:
+    branches: [feature/breakout-foundation, main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: refuse committed secrets files
+        run: |
+          if git ls-files | grep -E '(^|/)\.env($|\.)' | grep -v '\.env\.example$'; then echo "env file committed"; exit 1; fi
+          if git ls-files | grep -E '\.(pem|key|db|sqlite3?)$'; then echo "key/db file committed"; exit 1; fi
+      - uses: actions/setup-node@v4
+        with: { node-version: "22.23.4", cache: npm }
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - name: CD script tests (stubbed; no deployment)
+        run: bash scripts/test/breakout-cd.test.sh
+      - run: docker build -t breakout-copilot:ci .

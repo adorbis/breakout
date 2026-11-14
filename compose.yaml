@@ -1,0 +1,35 @@
+# Breakout — CANDIDATE Compose file (Trading Copilot, Release 1).
+# Not started by this change. Operate only through scripts/breakoutctl, which
+# pins --project-directory /docker/breakout and -p breakout.
+#
+# Isolation: no external/production networks, no host networking, loopback-only
+# port, a Breakout-owned named volume. Nothing here reaches TradeOS, OpenAlgo
+# or Collector; those integrations are disabled (see docs/architecture).
+name: breakout
+
+services:
+  copilot:
+    build: .
+    image: ${BREAKOUT_IMAGE:-breakout-copilot:candidate}   # breakout-cd sets breakout-copilot:<commit12>
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Fixed for the container; .env cannot move these.
+      BREAKOUT_HTTP_BIND: 0.0.0.0
+      BREAKOUT_HTTP_PORT: "8787"
+      BREAKOUT_DB_PATH: /data/breakout.db
+      BREAKOUT_STATIC_DIR: /app/frontend/dist
+    ports:
+      - "127.0.0.1:${BREAKOUT_HOST_PORT:?set BREAKOUT_HOST_PORT in .env}:8787"
+    volumes:
+      - copilot_data:/data
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+volumes:
+  copilot_data: {}

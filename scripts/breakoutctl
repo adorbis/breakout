@@ -54,10 +54,12 @@ cmd_restore() {
 
 cmd_health() {
   compose ps
-  local url=""
-  [[ -f "$ROOT/.env" ]] && url=$(sed -n 's/^BREAKOUT_HEALTH_URL=\([^ #]*\).*/\1/p' "$ROOT/.env")
-  if [[ -n "$url" ]]; then curl -fsS -m 5 "$url" >/dev/null && echo "health: OK $url" || die "health: FAIL $url"
-  else echo "health: BREAKOUT_HEALTH_URL not set; container status only"; fi
+  local port=""
+  [[ -f "$ROOT/.env" ]] && port=$(sed -n 's/^BREAKOUT_HOST_PORT=\([0-9]*\).*/\1/p' "$ROOT/.env")
+  if [[ -n "$port" ]]; then
+    local url="http://127.0.0.1:$port/healthz"
+    curl -fsS -m 5 "$url" && echo && echo "health: OK $url" || die "health: FAIL $url"
+  else echo "health: BREAKOUT_HOST_PORT not set; container status only"; fi
 }
 
 case "${1:-help}" in
