@@ -45,7 +45,7 @@ const IntegrationHealthPanel: FC = () => {
                 {report.entries.map((e) => (
                   <tr key={e.id}>
                     <td><b>{e.label}</b></td>
-                    <td><span className={`pill ${STATE_CLASS[e.state]}`}><span className="sr-only">{e.state}</span>{STATE_LABEL[e.state]}</span></td>
+                    <td><span className={`pill ${STATE_CLASS[e.state]}`}><span className="sr-only">{e.state}</span>{STATE_LABEL[e.state]}</span>{e.mode === "bridge" && <span className="chip-mode" title="Read-only bridge to an unversioned TradeOS route">bridge</span>}</td>
                     <td className="detail-cell">{e.detail ?? "—"}</td>
                   </tr>
                 ))}
@@ -97,11 +97,13 @@ export const SettingsView: FC<{
           <label className="field-col">View after sign-in
             <select value={preferences.default_view} onChange={(e) => set({ default_view: e.target.value as Preferences["default_view"] })}>
               <option value="dashboard">Dashboard</option>
-              <option value="copilot">Copilot</option>
-              <option value="watchlists">Watchlists</option>
+              <option value="market">Market overview</option>
               <option value="scanner">Scanner</option>
+              <option value="chart">Charts</option>
+              <option value="watchlists">Watchlists</option>
               <option value="positions">Positions</option>
-              <option value="settings">Settings</option>
+              <option value="alerts">Alerts</option>
+              <option value="copilot">AI Chat</option>
             </select>
           </label>
           <label className="field-col">Default exchange
@@ -111,9 +113,11 @@ export const SettingsView: FC<{
           </label>
           <label className="field-col">Default chart interval
             <select value={preferences.chart_interval} onChange={(e) => set({ chart_interval: e.target.value as Preferences["chart_interval"] })}>
+              <option value="1minute">1 minute</option>
               <option value="5minute">5 minutes</option>
               <option value="15minute">15 minutes</option>
               <option value="30minute">30 minutes</option>
+              <option value="60minute">1 hour</option>
               <option value="day">Daily</option>
             </select>
           </label>
@@ -124,6 +128,12 @@ export const SettingsView: FC<{
               <option value={30}>30 seconds</option>
               <option value={60}>60 seconds</option>
               <option value={300}>5 minutes</option>
+            </select>
+          </label>
+          <label className="field-col">Density
+            <select value={preferences.density} onChange={(e) => set({ density: e.target.value as Preferences["density"] })}>
+              <option value="comfortable">Comfortable</option>
+              <option value="compact">Compact (denser tables)</option>
             </select>
           </label>
         </div>

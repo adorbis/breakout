@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "3.0.82",
-    "@hono/node-server": "2.1.5",
+    "@hono/node-server": "2.1.8",
     "ai": "7.0.159",
     "hono": "4.13.16",
     "zod": "4.6.7"

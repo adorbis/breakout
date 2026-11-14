@@ -9,3 +9,4 @@ references
 docs
 scripts
 **/*.db*
+adapter.env

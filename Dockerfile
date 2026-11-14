@@ -7,6 +7,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY backend/package.json backend/
 COPY frontend/package.json frontend/
+COPY adapter/package.json adapter/
 RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY frontend frontend
 RUN npm run build -w frontend
@@ -16,6 +17,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY backend/package.json backend/
 COPY frontend/package.json frontend/
+COPY adapter/package.json adapter/
 RUN npm ci --ignore-scripts --no-audit --no-fund --omit=dev -w backend
 
 FROM ${NODE_IMAGE}

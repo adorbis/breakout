@@ -17,6 +17,18 @@ Breakout is the trader-facing workspace around the existing TradeOS decision aut
 
 This branch bootstraps the repository with selected, attributed reference implementations and technical assessments from three upstream repositories. It does not contain a production Breakout application implementation.
 
+## Trader application (Release 1)
+
+`frontend/` is the public site plus the trader terminal (`/app/*`). `backend/` is the Hono/SQLite API with the TradeOS integration layer (contract v1 + read-only bridge), alerts and accounts. `adapter/` is the separate read-only OpenAlgo market-data adapter. Status, verification and outstanding items: [development report 2026-11-14](docs/audit/BREAKOUT_DEVELOPMENT_REPORT_2026-11-14.md).
+
+```bash
+PATH=/docker/breakout/runtime/tooling/node/bin:$PATH
+npm ci --ignore-scripts && npm run typecheck && npm test && npm run build
+# Browser e2e (headless Chromium in runtime/tooling):
+BREAKOUT_E2E_CHROME=runtime/tooling/browsers/chromium_headless_shell-1194/chrome-linux/headless_shell node backend/test/e2e.terminal.ts
+# Accounts: BREAKOUT_DB_PATH=... node backend/src/cli.ts create-user <name> [--admin]   (password on stdin)
+```
+
 ## Trading Copilot (first module)
 
 `frontend/` (assistant-ui, React) and `backend/` (Hono, AI SDK v7, SQLite) form the Trading Copilot. It's a chat assistant powered by the Adorbis AI Gateway. All trading-system tools are disabled in this release. See [the architecture](docs/architecture/TRADING_COPILOT.md), [deployment and rollback](docs/deployment/COPILOT_DEPLOYMENT.md) and [dependencies](docs/THIRD_PARTY_DEPENDENCIES.md).

@@ -86,12 +86,18 @@ const PreferencesPatch = z.object({
     .refine((v) => v === undefined || Object.keys(v).length <= 10, "too many panels"),
   alert_min_priority: z.number().int().min(1).max(5).optional(),
   density: z.enum(["comfortable", "compact"]).optional(),
+  // User-drawn horizontal chart levels, per instrument ("NSE:SBIN" → prices).
+  chart_levels: z.record(z.string().regex(/^[A-Z_]{2,12}:[A-Z0-9&_.\- ]{1,40}$/), z.array(z.number().positive().max(1e7)).max(10)).optional()
+    .refine((v) => v === undefined || Object.keys(v).length <= 100, "too many instruments"),
+  chart_panes: z.array(z.object({ exchange: z.enum(EXCHANGES), symbol: SymbolField, interval: z.enum(CANDLE_INTERVALS) }).strict()).max(4).optional(),
+  last_instrument: z.object({ exchange: z.enum(EXCHANGES), symbol: SymbolField }).strict().nullable().optional(),
 }).strict();
 const DEFAULT_PREFERENCES = {
   theme: "system", default_view: "dashboard", default_exchange: "NSE",
   chart_interval: "30minute", auto_refresh_seconds: 30,
   sidebar_collapsed: false, right_panel_open: true, chart_layout: "single",
   chart_indicators: ["volume", "levels"], panel_sizes: {}, alert_min_priority: 1, density: "comfortable",
+  chart_levels: {}, chart_panes: [], last_instrument: null,
 } as const;
 const MAX_WATCHLISTS = 20;
 const MAX_ITEMS_PER_LIST = 100;
@@ -180,6 +186,20 @@ export function createApp(deps: {
     if (r === "taken") return c.json(err("conflict", "That username is taken."), 409);
     log.info("auth.register", { user: r.username });
     return c.json({ user: r }, 201);
+  });
+  // Public contact / access-request form. Stored for administrators; nothing is emailed.
+  const Contact = z.object({
+    name: z.string().trim().min(1).max(80), email: z.string().trim().max(200).email(),
+    topic: z.enum(["access", "product", "partnership", "support", "other"]), message: z.string().trim().min(10).max(2000),
+  }).strict();
+  app.post("/api/public/contact", async (c) => {
+    const ip = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+    if (loginLimiter.take(`contact:${ip}`)) return c.json(err("rate_limited", "Too many messages. Try again shortly."), 429);
+    const body = Contact.safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json(err("bad_request", "Name, a valid email, a topic and a message of at least 10 characters are required."), 400);
+    store.addContactRequest(body.data);
+    log.info("contact.request", { topic: body.data.topic });
+    return c.json({ ok: true }, 201);
   });
   // Public, unauthenticated product facts for the landing site. No data feeds.
   app.get("/api/public/info", (c) => c.json({

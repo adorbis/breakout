@@ -227,5 +227,7 @@ export function mountFeatures(api: Hono<AppEnv>, deps: {
       plan: u.plan, created_at: u.created_at, disabled: Boolean(u.disabled) })),
   }));
 
+  api.get("/admin/contact-requests", auth.requireAdmin, (c) => c.json({ requests: store.listContactRequests() }));
+
   return { sampleSize: SAMPLE_CATALOG.length };
 }

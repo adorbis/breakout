@@ -31,5 +31,23 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "5" }
 
+  # Read-only OpenAlgo market-data adapter. OPT-IN: started only with
+  # `--profile adapter`. It holds the only OpenAlgo key (its own env file,
+  # adapter.env, never .env). It is on no network that reaches OpenAlgo until
+  # that network attachment is separately approved; until then market data
+  # stays "not connected" in Breakout.
+  adapter:
+    profiles: ["adapter"]
+    build: { context: ., dockerfile: adapter/Dockerfile }
+    image: ${BREAKOUT_ADAPTER_IMAGE:-breakout-adapter:candidate}
+    restart: unless-stopped
+    env_file: adapter.env
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
 volumes:
   copilot_data: {}

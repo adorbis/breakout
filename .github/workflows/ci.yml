@@ -25,3 +25,4 @@ jobs:
       - name: CD script tests (stubbed; no deployment)
         run: bash scripts/test/breakout-cd.test.sh
       - run: docker build -t breakout-copilot:ci .
+      - run: docker build -f adapter/Dockerfile -t breakout-adapter:ci .

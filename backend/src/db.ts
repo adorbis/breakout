@@ -132,6 +132,15 @@ export const MIGRATIONS: string[] = [
      key TEXT PRIMARY KEY,
      value TEXT NOT NULL,
      updated_at TEXT NOT NULL);`,
+  // 7: public-site contact / access requests (read by administrators).
+  `CREATE TABLE contact_requests (
+     id TEXT PRIMARY KEY,
+     name TEXT NOT NULL,
+     email TEXT NOT NULL,
+     topic TEXT NOT NULL,
+     message TEXT NOT NULL,
+     created_at TEXT NOT NULL);
+   CREATE INDEX contact_requests_time ON contact_requests(created_at DESC);`,
 ];
 
 export type UserRole = "trader" | "admin";
@@ -299,6 +308,16 @@ export class Store {
       `SELECT DISTINCT w.user_id, wi.symbol FROM watchlist_items wi JOIN watchlists w ON w.id = wi.watchlist_id
        JOIN users u ON u.id = w.user_id WHERE u.disabled = 0 AND wi.symbol IN (${marks})`,
     ).all(...symbols) as { user_id: string; symbol: string }[];
+  }
+
+  // --- contact requests (public site) ------------------------------------------
+  addContactRequest(r: { name: string; email: string; topic: string; message: string }): void {
+    this.db.prepare("INSERT INTO contact_requests (id, name, email, topic, message, created_at) VALUES (?,?,?,?,?,?)")
+      .run(randomId(), r.name, r.email, r.topic, r.message, now());
+  }
+  listContactRequests(limit = 200) {
+    return this.db.prepare("SELECT * FROM contact_requests ORDER BY created_at DESC LIMIT ?").all(limit) as
+      { id: string; name: string; email: string; topic: string; message: string; created_at: string }[];
   }
 
   // --- kv (poller cursors) ---------------------------------------------------

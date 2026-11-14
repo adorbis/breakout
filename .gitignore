@@ -26,3 +26,11 @@ __pycache__/
 .venv/
 .pytest_cache/
 .DS_Store
+
+# Integration Adapter secrets (OpenAlgo key, HMAC key) — never committed.
+adapter.env
+
+# Restricted documentation (security investigations, infrastructure maps,
+# incident reports) never enters this public repository.
+docs/internal/
+*.restricted.md

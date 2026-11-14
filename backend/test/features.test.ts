@@ -238,3 +238,14 @@ test("F8 instrument search without the bridge: sample catalogue, labelled; detai
   assert.equal((await call(app, "/intel/next-candle?key=bad", { cookie: c })).status, 400);
   assert.equal((await call(app, "/intel/scanner", { cookie: c })).body.state, "disabled");
 });
+
+test("F9 contact form: validated, stored, visible to admins only", async () => {
+  const { app } = makeApp();
+  assert.equal((await call(app, "/public/contact", { method: "POST", body: { name: "A", email: "bad", topic: "access", message: "hello there friend" } })).status, 400);
+  assert.equal((await call(app, "/public/contact", { method: "POST", body: { name: "Asha", email: "asha@example.com", topic: "access", message: "Please grant early access." } })).status, 201);
+  const t = await login(app, "trader1", "trader1-password-123");
+  assert.equal((await call(app, "/admin/contact-requests", { cookie: t })).status, 403);
+  const a = await login(app, "boss", "boss-password-1234");
+  const r = await call(app, "/admin/contact-requests", { cookie: a });
+  assert.equal(r.body.requests[0].email, "asha@example.com");
+});

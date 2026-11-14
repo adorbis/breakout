@@ -43,7 +43,9 @@ export interface Integrations {
   report(): Promise<IntegrationsReport>;
 }
 
-const BRIDGE_NOTE = "Bridge mode (read-only, unversioned TradeOS route; Read Contract v1 is not implemented by TradeOS yet).";
+// Rows obtained over the bridge carry mode "bridge"; the UI explains it once
+// (read-only, unversioned TradeOS route; Read Contract v1 not yet implemented).
+const BRIDGE_NOTE = "Read over the bridge.";
 
 export function createIntegrations(deps: {
   cfg: Config; tradeos: TradeOS; gateway: Gateway; now?: () => number;
@@ -76,7 +78,7 @@ export function createIntegrations(deps: {
   function fromBridge<T>(name: string, label: string, feed: BridgeFeed<T>, at: string, judge: (d: T) => [IntegrationState, string]): IntegrationEntry {
     if (feed.state !== "ok") return entry(name, label, feed.state === "disabled" ? "not_configured" : "unavailable", feed.reason, at, "bridge");
     const [state, detail] = judge(feed.data);
-    return entry(name, label, state, `${detail} ${BRIDGE_NOTE}`, at, "bridge");
+    return entry(name, label, state, detail, at, "bridge");
   }
 
   /** v1 row unless v1 has nothing to offer and the bridge is on. */
