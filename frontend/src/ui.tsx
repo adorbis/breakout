@@ -3,7 +3,7 @@
 // within menus; splitters are resizable by pointer and by arrow keys.
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type FC, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ApiError, type BridgeFeed, type IntegrationState, type Label } from "./api.ts";
+import { ApiError, type BridgeFeed, type IntegrationState, type Label, type DataState } from "./api.ts";
 
 // --- formatting ---------------------------------------------------------------
 export const fmtNum = (n: number | null | undefined, d = 2) =>
@@ -42,6 +42,11 @@ export const StateChip: FC<{ state: IntegrationState; mode?: string | null }> = 
 );
 export const Tone: FC<{ tone: "ok" | "warn" | "err" | "off"; children: ReactNode; title?: string }> = ({ tone, children, title }) => (
   <span className={`chip chip-${tone}`} title={title}><span className="dot" aria-hidden />{children}</span>
+);
+/** Market-data state badge: LIVE / DELAYED / MARKET CLOSED / DEMO / UNAVAILABLE, with the server's detail as tooltip. */
+const SHORT: Record<DataState["state"], string> = { live: "LIVE", delayed: "DELAYED", closed: "CLOSED", demo: "DEMO", unavailable: "N/A" };
+export const DataStateBadge: FC<{ s: DataState | undefined | null; compact?: boolean }> = ({ s, compact }) => !s ? null : (
+  <span className={`ds ds-${s.state}`} title={s.detail} aria-label={`Data state: ${s.label}. ${s.detail}`}>{compact ? SHORT[s.state] : s.label}</span>
 );
 /** A TradeOS label exactly as returned; unknown vocabulary is badged, not hidden. */
 export const LabelBadge: FC<{ l: Label; kind?: string }> = ({ l, kind = "label" }) => (

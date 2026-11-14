@@ -5,12 +5,12 @@
 import { useMemo, useState, type FC } from "react";
 import {
   api, type BridgeEngines, type BridgeNextCandle, type InstrumentDetail, type IntegrationsReport,
-  type SessionClock, type WatchlistRecord, type AlertItem, type QuoteResult, type ViewId,
+  type SessionClock, type WatchlistRecord, type AlertItem, type QuoteResult, type ViewId, type ContractCheck,
 } from "../api.ts";
 import { PositionsView as V1PositionsView, W7ScoresView } from "../Intelligence.tsx";
 import {
   Authority, BridgeState, Dropdown, Empty, LabelBadge, Panel, Provenance, Slider, StateChip, Tabs, Tone,
-  ago, fmtDur, fmtInt, fmtNum, fmtWhen, useContextMenu, useLoad, useSort, type MenuItem,
+  ago, fmtDur, fmtInt, fmtNum, fmtWhen, useContextMenu, useLoad, useSort, type MenuItem, DataStateBadge,
 } from "../ui.tsx";
 import { loadScanner, type ScanResult, type ScanRow } from "./feeds.ts";
 import { CapabilityPanel } from "./Capabilities.tsx";
@@ -331,6 +331,7 @@ export const AnalysisView: FC<{ instrument: { exchange: string; symbol: string }
   const key = detail.data?.instrument.instrument_key ?? null;
   const nc = useLoad(() => (key ? api.nextCandle(key) : Promise.resolve(null)), 0, [key]);
   const quote = useLoad<QuoteResult | null>(() => (instrument ? api.quote(instrument.exchange, instrument.symbol) : Promise.resolve(null)), 0, [instrument?.exchange, instrument?.symbol]);
+  const contract = useLoad<ContractCheck | null>(() => (instrument ? api.contract(instrument.exchange, instrument.symbol) : Promise.resolve(null)), 0, [instrument?.exchange, instrument?.symbol]);
   if (!instrument) return <div className="view"><Empty title="Choose an instrument">Use the instrument search (press /) to analyse one.<div><button className="btn btn-primary" onClick={onPick}>Search instruments</button></div></Empty></div>;
   const d = detail.data?.instrument;
   return (
@@ -347,8 +348,13 @@ export const AnalysisView: FC<{ instrument: { exchange: string; symbol: string }
           <div><span className="k">In TradeOS universe</span>{d?.in_tradeos_universe === null ? <span className="muted">unknown (bridge off)</span> : d?.in_tradeos_universe ? "Yes" : "No"}</div>
           <div><span className="k">Lot size</span>{d?.lot_size ? <>{d.lot_size} <span className="muted small">as recorded by TradeOS {d.lot_size_as_of ? fmtWhen(d.lot_size_as_of) : ""}</span></> : "—"}</div>
           <div><span className="k">Quote</span>{quote.data?.state === "ok"
-            ? <>{fmtNum(quote.data.data.ltp)} <span className="muted small">OpenAlgo · {ago(quote.data.data.as_of)}</span></>
+            ? <><span><b>{fmtNum(quote.data.data.ltp)}</b> <DataStateBadge s={quote.data.data_state} /></span><span className="muted small">OpenAlgo · read {ago(quote.data.data.as_of)}</span></>
             : <span className="muted">{quote.data?.reason ?? "—"}</span>}</div>
+          <div><span className="k">F&amp;O contract (broker master)</span>{!contract.data ? <span className="muted">checking…</span>
+            : contract.data.state !== "ok" ? <span className="muted small">{contract.data.reason}</span>
+            : <><span><code>{contract.data.contract?.symbol}</code> lot {fmtInt(contract.data.contract?.lot_size ?? null)}</span>
+              <span className={`small ${contract.data.lot_size_check === "mismatch" ? "err-text" : "muted"}`}>{contract.data.lot_size_check === "match" ? "matches TradeOS's lot size"
+                : contract.data.lot_size_check === "mismatch" ? `differs from TradeOS's recorded ${contract.data.tradeos?.lot_size} — check before sizing` : "TradeOS lot size not available to compare"}</span></>}</div>
           {detail.data && <div><span className="k">Your watchlists</span>{detail.data.watchlists.map((w) => w.name).join(", ") || "none"}</div>}
         </div>
       </Panel>

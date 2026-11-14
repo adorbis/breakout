@@ -305,3 +305,13 @@ test("B19 integration panel in bridge mode: rows say 'bridge'; v1 still preferre
   const s = r.summary;
   assert.equal(s.connected + s.degraded_or_stale + s.pending + s.unavailable_or_off, r.entries.length);
 });
+
+test("B20 integration panel outside market hours: WF-08 is reachable and idle (connected), not pending", async () => {
+  const body = fx("system_intelligence-health.outside-hours");
+  const s = stub((p) => (p === "/system/intelligence-health" ? jsonRes(body) : p in FIXTURES ? jsonRes(FIXTURES[p]) : jsonRes({ detail: "Not Found" }, 404)));
+  const integ = createIntegrations({ cfg: cfgOn, tradeos: createTradeOS(cfgOn), gateway: { configured: false } as unknown as Gateway,
+    bridge: createBridge(cfgOn, createBridgeClient(cfgOn, Date.now, s.f)) });
+  const wf = (await integ.report()).entries.find((e) => e.id === "wf08")!;
+  assert.equal(wf.state, "connected");
+  assert.match(wf.detail!, /idle outside market hours/);
+});

@@ -110,7 +110,7 @@ test("A6 upstream failures map to explicit errors (no retry)", async () => {
 
 test("A7 outbound path set is exactly the allowlist; no order route exists in the source", () => {
   for (const p of adapter.outboundSeen()) assert.ok((OUTBOUND_PATHS as readonly string[]).includes(p), p);
-  assert.deepEqual([...OUTBOUND_PATHS].sort(), ["/api/v1/history", "/api/v1/quotes"]);
+  assert.deepEqual([...OUTBOUND_PATHS].sort(), ["/api/v1/expiry", "/api/v1/history", "/api/v1/ping", "/api/v1/quotes", "/api/v1/symbol"]);
   const src = readFileSync(new URL("../src/adapter.ts", import.meta.url), "utf8").replace(/\/\/.*$/gm, "");
   for (const forbidden of ["placeorder", "placesmartorder", "modifyorder", "cancelorder", "cancelallorder", "closeposition", "basketorder", "splitorder", "optionsorder", "funds"]) {
     assert.ok(!src.toLowerCase().includes(forbidden), `adapter source must not reference ${forbidden}`);
@@ -122,4 +122,48 @@ test("A8 per-route rate limit", async () => {
   let limited = false;
   for (let i = 0; i < 25 && !limited; i++) limited = (await signed("/v1/quote", { exchange: "NSE", symbol: "SBIN" })).status === 429;
   assert.ok(limited);
+});
+
+test("A9 symbol: instrument-master fields only (lot size, expiry, type), broker internals dropped", async () => {
+  upstreamReply = (p) => ({ status: 200, body: { status: "success", data: {
+    id: 77, symbol: "NIFTY25NOV26FUT", brsymbol: "NIFTY FUT 25 NOV 26", name: "NIFTY", exchange: "NFO", brexchange: "NSE_FO",
+    token: "NSE_FO|52168", expiry: "25-NOV-26", strike: -1, lotsize: 75, instrumenttype: "FUTIDX", tick_size: 0.1, freeze_qty: 1800, path: p } } });
+  const r = await signed("/v1/symbol", { exchange: "NFO", symbol: "NIFTY25NOV26FUT" });
+  assert.equal(r.status, 200);
+  const b = await r.json();
+  assert.equal(b.lot_size, 75); assert.equal(b.instrument_type, "FUTIDX"); assert.equal(b.expiry, "25-NOV-26"); assert.equal(b.tick_size, 0.1);
+  assert.equal(b.token, "NSE_FO|52168");
+  for (const k of ["brsymbol", "brexchange", "id", "freeze_qty", "path"]) assert.ok(!(k in b), `${k} must not pass through`);
+  assert.equal(calls.at(-1)!.url, "http://openalgo.mock/api/v1/symbol");
+});
+
+test("A10 symbol not in the master → explicit upstream error, not an empty contract", async () => {
+  upstreamReply = () => ({ status: 404, body: { status: "error", message: "Symbol SBIN not found in exchange NSE" } });
+  const r = await signed("/v1/symbol", { exchange: "NSE", symbol: "SBIN" });
+  assert.equal(r.status, 422);
+  assert.match((await r.json()).error.message, /not found/);
+});
+
+test("A11 ping proves the credential and returns the broker name only; the key never leaves upstream", async () => {
+  upstreamReply = () => ({ status: 200, body: { status: "success", data: { message: "pong", broker: "upstox" } } });
+  const r = await signed("/v1/ping", {});
+  assert.equal(r.status, 200);
+  const b = await r.json();
+  assert.deepEqual(Object.keys(b).sort(), ["as_of", "broker", "source"]);
+  assert.equal(b.broker, "upstox");
+  assert.equal(calls.at(-1)!.body.apikey, APIKEY, "key is sent to OpenAlgo only");
+  assert.ok(!JSON.stringify(b).includes(APIKEY));
+  upstreamReply = () => ({ status: 403, body: { status: "error", message: "Invalid openalgo apikey" } });
+  const bad = await signed("/v1/ping", {});
+  assert.equal(bad.status, 502);
+  assert.match((await bad.json()).error.message, /Invalid openalgo apikey/);
+});
+
+test("A12 expiry: futures dates passed through in OpenAlgo order, malformed entries dropped, kind validated", async () => {
+  upstreamReply = () => ({ status: 200, body: { status: "success", data: ["25-NOV-26", "30-DEC-26", "<script>", 42, "27-JAN-27"] } });
+  const r = await signed("/v1/expiry", { exchange: "NFO", symbol: "SBIN", kind: "futures" });
+  assert.equal(r.status, 200);
+  assert.deepEqual((await r.json()).expiries, ["25-NOV-26", "30-DEC-26", "27-JAN-27"]);
+  assert.equal(calls.at(-1)!.body.instrumenttype, "futures");
+  assert.equal((await signed("/v1/expiry", { exchange: "NFO", symbol: "SBIN", kind: "orders" })).status, 400);
 });

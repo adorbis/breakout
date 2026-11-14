@@ -16,7 +16,8 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-export const OUTBOUND_PATHS = ["/api/v1/quotes", "/api/v1/history"] as const;
+// Read-only only: quotes, history, instrument-master lookup and an authenticated liveness ping.
+export const OUTBOUND_PATHS = ["/api/v1/quotes", "/api/v1/history", "/api/v1/symbol", "/api/v1/expiry", "/api/v1/ping"] as const;
 type Outbound = (typeof OUTBOUND_PATHS)[number];
 
 export const VALID_EXCHANGES = ["NSE", "BSE", "NFO", "BFO", "CDS", "BCD", "MCX", "NCDEX", "NSE_INDEX", "BSE_INDEX"] as const;
@@ -28,6 +29,7 @@ const SKEW_S = 30;
 const MAX_BODY = 8 * 1024;
 const MAX_UPSTREAM = 2 * 1024 * 1024;
 const MAX_RANGE_DAYS = 400;
+const ROUTES = ["/v1/quote", "/v1/history", "/v1/symbol", "/v1/expiry", "/v1/ping"] as const;
 
 export interface AdapterConfig {
   openalgoBaseUrl: string;
@@ -141,12 +143,43 @@ export function createAdapter(cfg: AdapterConfig) {
     } };
   }
 
+  /** Instrument-master entry (OpenAlgo symbol service) — the F&O contract mapping as the broker master has it. */
+  async function symbolInfo(p: { exchange: string; symbol: string }) {
+    const r = await upstream("/api/v1/symbol", { exchange: p.exchange, symbol: p.symbol });
+    if (!r.ok) return r;
+    const d = (r.data ?? {}) as Record<string, unknown>;
+    const s = (v: unknown, max = 60) => (typeof v === "string" ? v.slice(0, max) : null);
+    return { ok: true as const, body: {
+      source: "openalgo", as_of: new Date(now()).toISOString(), exchange: p.exchange, symbol: p.symbol,
+      name: s(d.name, 120), token: s(d.token) ?? (n(d.token) !== null ? String(n(d.token)) : null),
+      instrument_type: s(d.instrumenttype, 20), expiry: s(d.expiry, 20), strike: n(d.strike),
+      lot_size: n(d.lotsize), tick_size: n(d.tick_size),
+    } };
+  }
+
+  /** F&O expiry dates for an underlying (OpenAlgo format "27-JAN-26", sorted by OpenAlgo). */
+  async function expiries(p: { exchange: string; symbol: string; kind: "futures" | "options" }) {
+    const r = await upstream("/api/v1/expiry", { exchange: p.exchange, symbol: p.symbol, instrumenttype: p.kind });
+    if (!r.ok) return r;
+    if (!Array.isArray(r.data)) return { ok: false as const, status: 502, message: "OpenAlgo expiry payload was not a list." };
+    const dates = (r.data as unknown[]).filter((d): d is string => typeof d === "string" && /^\d{2}-[A-Z]{3}-\d{2,4}$/.test(d)).slice(0, 60);
+    return { ok: true as const, body: { source: "openalgo", as_of: new Date(now()).toISOString(), exchange: p.exchange, symbol: p.symbol, kind: p.kind, expiries: dates } };
+  }
+
+  /** Authenticated liveness: proves the adapter's OpenAlgo credential works. Returns the broker name only. */
+  async function ping() {
+    const r = await upstream("/api/v1/ping", {});
+    if (!r.ok) return r;
+    const d = (r.data ?? {}) as Record<string, unknown>;
+    return { ok: true as const, body: { source: "openalgo", as_of: new Date(now()).toISOString(), broker: typeof d.broker === "string" ? d.broker.slice(0, 40) : null } };
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const started = now();
     const url = new URL(req.url ?? "/", "http://adapter");
-    if (req.method === "GET" && url.pathname === "/healthz") return json(res, 200, { ok: true, routes: ["/v1/quote", "/v1/history"] });
+    if (req.method === "GET" && url.pathname === "/healthz") return json(res, 200, { ok: true, routes: ROUTES });
     const route = url.pathname;
-    if (req.method !== "POST" || (route !== "/v1/quote" && route !== "/v1/history")) return error(res, 404, "not_found", "Unknown route.");
+    if (req.method !== "POST" || !(ROUTES as readonly string[]).includes(route)) return error(res, 404, "not_found", "Unknown route.");
 
     const chunks: Buffer[] = []; let size = 0;
     for await (const c of req) { size += (c as Buffer).length; if (size > MAX_BODY) return error(res, 413, "too_large", "Request body too large."); chunks.push(c as Buffer); }
@@ -162,6 +195,11 @@ export function createAdapter(cfg: AdapterConfig) {
 
     let p: Record<string, unknown>;
     try { p = JSON.parse(raw); } catch { return error(res, 400, "bad_request", "Body must be JSON."); }
+    if (route === "/v1/ping") {
+      const r = await ping();
+      audit({ event: "adapter.call", user, route, status: r.ok ? 200 : r.status, ms: now() - started });
+      return r.ok ? json(res, 200, r.body) : error(res, r.status, "upstream", r.message);
+    }
     const exchange = String(p.exchange ?? "");
     const symbol = String(p.symbol ?? "").toUpperCase();
     if (!(VALID_EXCHANGES as readonly string[]).includes(exchange) || !SYMBOL.test(symbol)) return error(res, 400, "bad_request", "Invalid exchange or symbol.");
@@ -169,6 +207,12 @@ export function createAdapter(cfg: AdapterConfig) {
     let r: { ok: true; body: unknown } | { ok: false; status: number; message: string };
     if (route === "/v1/quote") {
       r = await quote({ exchange, symbol });
+    } else if (route === "/v1/symbol") {
+      r = await symbolInfo({ exchange, symbol });
+    } else if (route === "/v1/expiry") {
+      const kind = String(p.kind ?? "futures");
+      if (kind !== "futures" && kind !== "options") return error(res, 400, "bad_request", "kind must be futures or options.");
+      r = await expiries({ exchange, symbol, kind });
     } else {
       const interval = String(p.interval ?? "") as Interval;
       const from = String(p.from ?? ""), to = String(p.to ?? "");

@@ -9,6 +9,7 @@ import type { MarketData } from "./marketdata.ts";
 import type { TradingContext } from "./policy.ts";
 import { readCapabilities, type Capability, type CapabilityState } from "./capabilities.ts";
 import { findInstrument } from "./instruments.ts";
+import { quoteState } from "./freshness.ts";
 
 export type EvidenceState = CapabilityState | "not_applicable";
 export interface EvidenceItem {
@@ -104,14 +105,17 @@ export async function buildEvidence(
     } else if (nc) items.push({ id: "next_candle", label: "Next-candle (this instrument)", state: "unavailable", text: clean(nc.reason), source: "/analysis/next-candle", as_of: null });
 
     // Live quote — only from the real market-data adapter; demo data is never evidence.
-    if (!marketdata.configured) items.push({ id: "quote", label: "Live quote", state: "unavailable", text: "The market-data adapter is not connected; no live price is available.", source: null, as_of: null });
-    else if (quote === "timeout") { partial = true; items.push({ id: "quote", label: "Live quote", state: "unavailable", text: "The market-data adapter did not answer within the time budget.", source: "openalgo", as_of: null }); }
+    if (!marketdata.configured) items.push({ id: "quote", label: "Quote", state: "unavailable", text: "The market-data adapter is not connected; no live price is available.", source: null, as_of: null });
+    else if (quote === "timeout") { partial = true; items.push({ id: "quote", label: "Quote", state: "unavailable", text: "The market-data adapter did not answer within the time budget.", source: "openalgo", as_of: null }); }
     else if (quote && quote.state === "ok") {
       const q = quote.data;
-      items.push({ id: "quote", label: "Live quote", state: q.ltp === null ? "unavailable" : "available",
-        text: clean(q.ltp === null ? "The adapter returned no last traded price." : `LTP ${q.ltp}${q.prev_close !== null ? `, previous close ${q.prev_close}` : ""}${q.high !== null && q.low !== null ? `, day range ${q.low}–${q.high}` : ""}.`),
+      const ds = quoteState(ctx.exchange, new Date(now()));
+      const state: EvidenceState = q.ltp === null ? "unavailable" : ds.state === "live" ? "available" : ds.state === "closed" ? "idle" : "stale";
+      const price = `LTP ${q.ltp}${q.prev_close !== null ? `, previous close ${q.prev_close}` : ""}${q.high !== null && q.low !== null ? `, day range ${q.low}–${q.high}` : ""}`;
+      items.push({ id: "quote", label: "Quote", state,
+        text: clean(q.ltp === null ? "The adapter returned no last traded price." : `${ds.label}: ${price}. ${ds.detail}`),
         source: "openalgo", as_of: q.as_of });
-    } else if (quote) items.push({ id: "quote", label: "Live quote", state: "unavailable", text: clean(quote.reason), source: "openalgo", as_of: null });
+    } else if (quote) items.push({ id: "quote", label: "Quote", state: "unavailable", text: clean(quote.reason), source: "openalgo", as_of: null });
   }
 
   return {

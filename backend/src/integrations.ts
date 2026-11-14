@@ -158,8 +158,11 @@ export function createIntegrations(deps: {
     if (!preferV1(wf08Entry) && bWf08) {
       wf08Entry = fromBridge("wf08", "WF-08 position monitoring", bWf08, at, (d) => {
         const svc = d.service.value;
-        const state: IntegrationState = svc === "HEALTHY" ? "connected" : svc === "UNKNOWN" ? "pending" : "degraded";
-        return [state, `WF-08 reports service ${svc}, coverage ${d.coverage.value}${d.books_failed.length ? `; ${d.books_failed.length} broker book(s) unreadable` : ""}.`];
+        // Outside market hours WF-08 does not run: the feed is reachable and idle, not pending.
+        const idle = svc === "UNKNOWN" && d.cycle_status === "outside_market_hours";
+        const state: IntegrationState = svc === "HEALTHY" || idle ? "connected" : svc === "UNKNOWN" ? "pending" : "degraded";
+        return [state, idle ? "WF-08 is idle outside market hours (TradeOS cycle status: outside_market_hours); service and coverage are reported during the session."
+          : `WF-08 reports service ${svc}, coverage ${d.coverage.value}${d.cycle_status ? `, last cycle ${d.cycle_status}` : ""}${d.books_failed.length ? `; ${d.books_failed.length} broker book(s) unreadable` : ""}.`];
       });
     }
     entries.push(wf08Entry);
@@ -207,7 +210,7 @@ export function createIntegrations(deps: {
     entries.push(entry("w9", "W9 entry intelligence", "pending",
       `W9 has no verified external interface yet; it activates only inside TradeOS on trade entry and has not been production-validated.${w9Worker ? ` TradeOS reports the W9 worker as ${w9Worker.status}.` : ""}`, at));
     entries.push(entry("portfolio", "Portfolio Stream", "not_implemented",
-      "Not implemented in TradeOS (adaptability audit 2026-11-14). Positions appear only through the WF-08 monitoring feed.", at));
+      "Not implemented in TradeOS. Positions appear only through the WF-08 monitoring feed.", at));
     entries.push(entry("ledger", "Trade ledger / outcomes", "pending",
       "Outcome capture (W17) is deployed in TradeOS; the historical backfill has not been run and no outcome feed exists yet.", at));
     entries.push(entry("ev", "EV gate", "not_implemented",
@@ -228,15 +231,17 @@ export function createIntegrations(deps: {
 
     // --- OpenAlgo (via the Integration Adapter) --------------------------------------
     if (marketdata?.configured) {
+      // An authenticated ping through the adapter proves the whole path (adapter
+      // reachable, HMAC accepted, OpenAlgo credential valid) on every report.
+      const ping = await marketdata.ping();
       const m = marketdata.status();
       entries.push(entry("openalgo", "OpenAlgo market data (via adapter)",
-        m.last_error ? "unavailable" : m.last_success_at ? "connected" : "pending",
-        m.last_error ?? (m.last_success_at ? `Last successful read ${m.last_success_at}.` : "Adapter configured; no market-data request yet in this process."), at));
+        ping.state === "ok" ? (m.last_error ? "degraded" : "connected") : "unavailable",
+        ping.state !== "ok" ? ping.reason
+          : `Adapter and OpenAlgo credential verified${ping.data.broker ? ` (broker: ${ping.data.broker})` : ""}.${m.last_error ? ` Last data request failed: ${m.last_error}` : m.last_success_at ? ` Last data read ${m.last_success_at}.` : ""}`, at));
     } else {
       entries.push(entry("openalgo", "OpenAlgo market data", "not_configured",
-        cfg.OPENALGO_BASE_URL
-          ? "An OpenAlgo endpoint is configured in the environment, but the read-only adapter service (separate, dual-homed) is not built or approved yet — no market data is fetched."
-          : "The read-only OpenAlgo adapter (separate service) is not configured; charts and quotes show explicit placeholders.", at));
+        "The read-only market-data adapter is not configured on this server (MARKETDATA_ADAPTER_URL and its HMAC key). Charts show DEMO data only where demo mode is enabled; quotes are unavailable.", at));
     }
 
     const summary = {

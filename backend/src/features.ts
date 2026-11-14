@@ -18,6 +18,7 @@ import type { Gateway } from "./gateway.ts";
 import { searchCatalog, findInstrument, demoCandles, SAMPLE_CATALOG, type Instrument } from "./instruments.ts";
 import { EXCHANGES } from "./policy.ts";
 import { readCapabilities } from "./capabilities.ts";
+import { candleState, demoState, quoteState, unavailableState } from "./freshness.ts";
 
 const err = (code: string, message: string) => ({ error: { code, message } });
 /** A query timestamp normalised to the stored ISO-UTC form, or undefined if absent/invalid. */
@@ -147,30 +148,71 @@ export function mountFeatures(api: Hono<AppEnv>, deps: {
     if (!(MD_INTERVALS as readonly string[]).includes(interval)) return c.json(err("bad_request", "Unknown interval."), 400);
     if (marketdata.configured) {
       const days = { "1minute": 3, "5minute": 7, "15minute": 15, "30minute": 30, "60minute": 60, day: 365 }[interval];
-      const to = new Date(); const from = new Date(to.getTime() - days * 86_400_000);
-      const r = await marketdata.history(c.get("user").id, { exchange, symbol, interval, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) });
+      // Calendar days in IST (the exchange's day), not UTC.
+      const istDate = (ms: number) => new Date(ms + 19_800_000).toISOString().slice(0, 10);
+      const nowMs = Date.now();
+      const r = await marketdata.history(c.get("user").id, { exchange, symbol, interval, from: istDate(nowMs - days * 86_400_000), to: istDate(nowMs) });
       if (r.state === "ok") {
-        return c.json({ source: "openalgo", interval, as_of: r.data.as_of,
+        const last = r.data.candles.at(-1)?.time ?? null;
+        return c.json({ source: "openalgo", interval, as_of: r.data.as_of, data_state: candleState(exchange, interval, last),
           candles: r.data.candles.map((k) => ({ time: new Date(k.time * 1000).toISOString(), open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume })) });
       }
-      return c.json({ source: "unavailable", reason: r.reason }, 503);
+      // A configured but failing live source is never papered over with demo data.
+      return c.json({ source: "unavailable", reason: r.reason, data_state: unavailableState(r.reason) }, 503);
     }
-    if (cfg.BREAKOUT_DEMO_DATA) return c.json(demoCandles(symbol, interval));
+    if (cfg.BREAKOUT_DEMO_DATA) return c.json({ ...demoCandles(symbol, interval), data_state: demoState() });
     const known = findInstrument(exchange, symbol);
-    return c.json({
-      source: "unavailable",
-      reason: known
-        ? "Live candle data is not connected. The read-only OpenAlgo adapter is a separate, approved service (see the Integration Health panel)."
-        : "Live candle data is not connected, and this symbol is not in the sample catalog.",
-    }, 503);
+    const reason = known
+      ? "Live candle data is not connected. The read-only OpenAlgo adapter is a separate, approved service (see the Integration Health panel)."
+      : "Live candle data is not connected, and this symbol is not in the sample catalog.";
+    return c.json({ source: "unavailable", reason, data_state: unavailableState(reason) }, 503);
   });
-
   api.get("/instruments/quote", async (c) => {
     const exchange = (c.req.query("exchange") ?? "NSE").toUpperCase();
     const symbol = (c.req.query("symbol") ?? "").toUpperCase();
     if (!symbol || !(EXCHANGES as readonly string[]).includes(exchange)) return c.json(err("bad_request", "exchange and symbol are required."), 400);
     const r = await marketdata.quote(c.get("user").id, { exchange, symbol });
-    return c.json(r, r.state === "ok" ? 200 : 503);
+    return c.json({ ...r, data_state: r.state === "ok" ? quoteState(exchange) : unavailableState(r.reason) }, r.state === "ok" ? 200 : 503);
+  });
+  // F&O contract mapping: TradeOS's recorded F&O lot size checked against the
+  // broker instrument master (via OpenAlgo) for the near-month futures contract.
+  // A disagreement is shown, never resolved by guessing.
+  api.get("/instruments/contract", async (c) => {
+    const exchange = (c.req.query("exchange") ?? "NSE").toUpperCase();
+    const symbol = (c.req.query("symbol") ?? "").toUpperCase();
+    if (!symbol || !(EXCHANGES as readonly string[]).includes(exchange)) return c.json(err("bad_request", "exchange and symbol are required."), 400);
+    const user = c.get("user").id;
+    const uni = await universe();
+    const tradeos = uni?.find((i) => i.exchange === exchange && i.symbol === symbol) ?? null;
+    const base = { exchange, symbol,
+      tradeos: tradeos ? { lot_size: tradeos.lot_size, lot_size_as_of: tradeos.lot_size_as_of, instrument_key: tradeos.instrument_key } : null };
+    if (!marketdata.configured) return c.json({ ...base, state: "not_configured", reason: "The market-data adapter is not configured; the broker instrument master cannot be read.", contract: null, lot_size_check: "not_comparable" });
+
+    // F&O contracts trade on NFO for NSE underlyings (BFO for BSE).
+    const foExchange = exchange === "BSE" ? "BFO" : exchange === "NSE" ? "NFO" : exchange;
+    const ex = await marketdata.expiries(user, { exchange: foExchange, symbol, kind: "futures" });
+    if (ex.state !== "ok") return c.json({ ...base, state: "unavailable", reason: ex.reason, contract: null, lot_size_check: "not_comparable" });
+    const todayIst = new Date(Date.now() + 19_800_000).toISOString().slice(0, 10);
+    // OpenAlgo expiry "25-NOV-26" → "2026-11-25" (calendar date; no timezone involved).
+    const MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+    const toIso = (d: string) => {
+      const m2 = /^(\d{2})-([A-Z]{3})-(\d{2}|\d{4})$/.exec(d); const mi = m2 ? MON.indexOf(m2[2]!) : -1;
+      return m2 && mi >= 0 ? `${m2[3]!.length === 2 ? `20${m2[3]}` : m2[3]}-${String(mi + 1).padStart(2, "0")}-${m2[1]}` : null;
+    };
+    const near = ex.data.expiries.find((d) => { const iso = toIso(d); return iso !== null && iso >= todayIst; }) ?? null;
+    if (!near) {
+      return c.json({ ...base, state: "unavailable", contract: null, lot_size_check: "not_comparable",
+        reason: ex.data.expiries.length ? "No current futures expiry was found in the broker master." : "The broker master lists no futures for this underlying. If common F&O names are also missing, OpenAlgo's master contract has not been downloaded." });
+    }
+    const [dd, mmm, yy] = near.split("-") as [string, string, string];
+    const futSymbol = `${symbol}${dd}${mmm}${yy.slice(-2)}FUT`;
+    const m = await marketdata.symbol(user, { exchange: foExchange, symbol: futSymbol });
+    if (m.state !== "ok") return c.json({ ...base, state: "unavailable", reason: m.reason, contract: { exchange: foExchange, symbol: futSymbol, expiry: near }, lot_size_check: "not_comparable" });
+    const brokerLot = m.data.lot_size;
+    return c.json({ ...base, state: "ok", reason: null,
+      contract: { exchange: foExchange, symbol: futSymbol, expiry: near, lot_size: brokerLot, tick_size: m.data.tick_size, instrument_type: m.data.instrument_type, token: m.data.token, as_of: m.data.as_of },
+      lot_size_check: brokerLot === null || !tradeos || tradeos.lot_size === null ? "not_comparable" : brokerLot === tradeos.lot_size ? "match" : "mismatch",
+    });
   });
 
   // --- alerts (TradeOS → ntfy → Breakout; acknowledgement is per user) -------------

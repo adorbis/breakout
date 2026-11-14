@@ -265,7 +265,7 @@ test("13 decision boundary: prompt states TradeOS is unavailable and forbids fab
   // TradeOS is not connected in this test server: the evidence says so, it invents nothing.
   assert.match(system, /<tradeos_evidence retrieved_at="[^"]+">/);
   assert.match(system, /Mathematical \(EV\) \[not_implemented\]/);
-  assert.match(system, /Live quote \[unavailable\][^\n]*not connected/);
+  assert.match(system, /- Quote \[unavailable\][^\n]*not connected/);
   assert.match(system, /has NO value: say it is unavailable/);
 });
 

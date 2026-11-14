@@ -94,10 +94,18 @@ export const CANDLE_INTERVALS: { id: CandleInterval; label: string }[] = [
   { id: "30minute", label: "30m" }, { id: "60minute", label: "1h" }, { id: "day", label: "1D" },
 ];
 export interface Candle { time: string; open: number; high: number; low: number; close: number; volume: number }
+export type DataStateId = "live" | "delayed" | "closed" | "demo" | "unavailable";
+export interface DataState { state: DataStateId; label: string; detail: string; last_bar_at: string | null; lag_seconds: number | null }
 export type CandlesResponse =
-  | { source: "demo"; interval: string; candles: Candle[]; note: string }
-  | { source: "openalgo"; interval: string; candles: Candle[]; as_of: string }
-  | { source: "unavailable"; reason: string };
+  | { source: "demo"; interval: string; candles: Candle[]; note: string; data_state?: DataState }
+  | { source: "openalgo"; interval: string; candles: Candle[]; as_of: string; data_state?: DataState }
+  | { source: "unavailable"; reason: string; data_state?: DataState };
+export interface ContractCheck {
+  exchange: string; symbol: string; state: "ok" | "unavailable" | "not_configured"; reason: string | null;
+  tradeos: { lot_size: number | null; lot_size_as_of: string | null; instrument_key: string } | null;
+  contract: { exchange: string; symbol: string; expiry: string; lot_size?: number | null; tick_size?: number | null; instrument_type?: string | null; as_of?: string } | null;
+  lot_size_check: "match" | "mismatch" | "not_comparable";
+}
 
 // --- preferences ------------------------------------------------------------------
 export type ViewId = "dashboard" | "market" | "scanner" | "watchlists" | "chart" | "analysis" | "positions" | "alerts"
@@ -202,7 +210,7 @@ export interface AlertItem {
 }
 export interface NotificationItem { id: string; kind: string; title: string; body: string | null; ref: string | null; created_at: string; read_at: string | null }
 export interface Quote { source: "openalgo"; as_of: string; exchange: string; symbol: string; ltp: number | null; open: number | null; high: number | null; low: number | null; prev_close: number | null; volume: number | null; bid: number | null; ask: number | null }
-export type QuoteResult = { state: "ok"; source: "openalgo"; data: Quote } | { state: "not_configured" | "unavailable"; source: "openalgo"; reason: string };
+export type QuoteResult = ({ state: "ok"; source: "openalgo"; data: Quote } | { state: "not_configured" | "unavailable"; source: "openalgo"; reason: string }) & { data_state?: DataState };
 export interface InstrumentDetail {
   instrument: { exchange: string; symbol: string; name: string; kind: string; instrument_key: string | null; lot_size: number | null; lot_size_as_of: string | null; in_tradeos_universe: boolean | null };
   watchlists: { id: string; name: string }[];
@@ -323,6 +331,8 @@ export const api = {
   removeWatchlistItem: (listId: string, itemId: string) =>
     request<{ ok: true }>(`/watchlists/${listId}/items/${itemId}`, { method: "DELETE" }),
   searchInstruments: (q: string) => request<CatalogResponse>(`/instruments/search?q=${encodeURIComponent(q)}`),
+  contract: (exchange: string, symbol: string) =>
+    requestAny<ContractCheck>(`/instruments/contract?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(symbol)}`),
   candles: (exchange: string, symbol: string, interval: CandleInterval) =>
     requestAny<CandlesResponse>(`/instruments/candles?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(symbol)}&interval=${interval}`),
 };

@@ -319,7 +319,7 @@ try {
     // The evidence panel shows what the model was given, and the model actually received it.
     const ev = page.locator(".evidence");
     await ev.locator(".ev", { hasText: "Scanner (this instrument)" }).waitFor();
-    assert.ok(await ev.locator(".ev", { hasText: "Live quote" }).getByText("Unavailable").isVisible());
+    assert.ok(await ev.locator(".ev", { hasText: "Quote" }).getByText("Unavailable").isVisible());
     const system = String(gw.requests.at(-1)!.body.messages[0].content);
     assert.match(system, /<tradeos_evidence retrieved_at=/);
     assert.match(system, /Scanner \(this instrument\) \[/);

@@ -71,3 +71,13 @@ test("E4 no evidence → the prompt says every reading is unavailable", () => {
   assert.match(buildSystemPrompt(null, null), /No TradeOS evidence is attached/);
   assert.match(buildSystemPrompt({ exchange: "NSE", symbol: "SBIN" }, "<tradeos_evidence retrieved_at=\"x\">\n</tradeos_evidence>"), /<tradeos_evidence/);
 });
+
+test("E5 demo mode never becomes evidence: with demo charts on and no adapter, the quote is unavailable", async () => {
+  const demoCfg = loadConfig({ ...base, BREAKOUT_DEMO_DATA: "true" });
+  const e = await buildEvidence({ exchange: "NSE", symbol: "SBIN" },
+    { bridge: createBridge(demoCfg), tradeos: createTradeOS(demoCfg), marketdata: createMarketData(demoCfg), userId: "u1" });
+  const q = e.items.find((i) => i.id === "quote")!;
+  assert.equal(q.state, "unavailable");
+  assert.ok(!/demo|synthetic|\d+\.\d+/i.test(q.text), "no demo price leaks into evidence");
+  assert.ok(e.items.every((i) => i.source !== "demo"));
+});

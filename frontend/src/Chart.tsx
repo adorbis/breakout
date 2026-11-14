@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState, type FC } from "react";
 import { createChart, CrosshairMode, LineStyle, type IChartApi, type ISeriesApi, type UTCTimestamp, type IPriceLine } from "lightweight-charts";
 import { api, CANDLE_INTERVALS, type CandleInterval, type CandlesResponse, type Indicator } from "./api.ts";
 import { ema, levels, sma, vwap, type Bar } from "./indicators.ts";
-import { Dropdown, Segmented, useContextMenu, fmtNum, ago, type MenuItem } from "./ui.tsx";
+import { Dropdown, Segmented, useContextMenu, fmtNum, ago, type MenuItem, DataStateBadge, fmtWhen } from "./ui.tsx";
 
 const IST = 19_800;
 const INDICATOR_LABEL: Record<Indicator, string> = { volume: "Volume", sma20: "SMA 20", sma50: "SMA 50", ema20: "EMA 20", vwap: "VWAP", levels: "Levels" };
@@ -156,7 +156,8 @@ export const ChartPane: FC<ChartProps> = ({ exchange, symbol, interval, onInterv
           <button className="icon-btn" onClick={() => chart.current?.timeScale().fitContent()} aria-label="Fit" title="Fit all bars">Fit</button>
         </div>
         <span className="chart-src">
-          {loading ? "Loading…" : res?.source === "openalgo" ? <>OpenAlgo · {ago(res.as_of)}</> : res?.source === "demo" ? <b className="demo-tag">DEMO DATA</b> : res ? "No data" : ""}
+          {loading ? "Loading…" : res?.source === "openalgo" ? <><DataStateBadge s={res.data_state} /> OpenAlgo · read {ago(res.as_of)}{res.data_state?.last_bar_at ? ` · last bar ${fmtWhen(res.data_state.last_bar_at)}` : ""}</>
+            : res?.source === "demo" ? <b className="demo-tag">DEMO DATA</b> : res ? <DataStateBadge s={res.data_state ?? { state: "unavailable", label: "UNAVAILABLE", detail: "No data", last_bar_at: null, lag_seconds: null }} /> : ""}
         </span>
       </div>
       <div className="chart-legend" aria-live="off">

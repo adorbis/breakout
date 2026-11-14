@@ -11,7 +11,7 @@ import {
 } from "./api.ts";
 import { navigate, useRoute } from "./router.ts";
 import {
-  ContextMenuProvider, Drawer, Dropdown, Empty, Modal, Splitter, StateChip, ToastProvider, Tone, ago, fmtWhen, useLoad, useToast,
+  ContextMenuProvider, Drawer, Dropdown, Empty, Modal, Splitter, StateChip, ToastProvider, Tone, ago, fmtWhen, useLoad, useToast, DataStateBadge,
 } from "./ui.tsx";
 import { AnalysisView, DashboardView, MarketView, PositionsPage, ScannerView, type Nav } from "./views/Intel.tsx";
 import { AccountView, AdminView, AlertsView, NotificationsView, ProfileView } from "./views/Account.tsx";
@@ -113,7 +113,23 @@ const AddToWatchlist: FC<{ target: (Inst & { instrument_key?: string | null }) |
 };
 
 // --- right context panel -----------------------------------------------------------------
-const ContextPanel: FC<{ instrument: Inst | null; nav: Nav; onClose: () => void }> = ({ instrument, nav, onClose }) => {
+/** One watchlist quote with its market-data state; refreshed every 60 s while visible. */
+const QuoteCell: FC<{ exchange: string; symbol: string }> = ({ exchange, symbol }) => {
+  const q = useLoad(() => api.quote(exchange, symbol), 60, [exchange, symbol]);
+  if (!q.data) return <span className="muted small">…</span>;
+  if (q.data.state !== "ok") return <span className="muted small" title={q.data.reason}>n/a</span>;
+  const d = q.data.data;
+  const ch = d.ltp !== null && d.prev_close ? ((d.ltp - d.prev_close) / d.prev_close) * 100 : null;
+  return (
+    <span className="wl-q" title={q.data.data_state?.detail}>
+      <b>{d.ltp !== null ? d.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}</b>
+      {ch !== null && <span className={ch >= 0 ? "up small" : "down small"}>{ch >= 0 ? "+" : ""}{ch.toFixed(2)}%</span>}
+      <DataStateBadge s={q.data.data_state} compact />
+    </span>
+  );
+};
+
+const ContextPanel: FC<{ instrument: Inst | null; nav: Nav; onClose: () => void; quotes: boolean }> = ({ instrument, nav, onClose, quotes }) => {
   const lists = useLoad<{ watchlists: WatchlistRecord[] }>(api.watchlists, 60);
   const [sel, setSel] = useState<string>("");
   const wl = lists.data?.watchlists ?? [];
@@ -141,13 +157,14 @@ const ContextPanel: FC<{ instrument: Inst | null; nav: Nav; onClose: () => void 
         </div>
         {!lists.data ? <div className="loading-inline">Loading…</div> : !cur ? <Empty title="No watchlists"><button className="btn btn-sm" onClick={() => nav.go("watchlists")}>Create</button></Empty> : (
           <ul className="wl-quick">
-            {cur.items.map((i) => (
-              <li key={i.id}><button className={`wl-sym${instrument?.symbol === i.symbol ? " on" : ""}`} onClick={() => nav.chart(i)}><b>{i.symbol}</b> <span className="muted small">{i.exchange}</span></button></li>
+            {cur.items.map((i, k) => (
+              <li key={i.id}><button className={`wl-sym${instrument?.symbol === i.symbol ? " on" : ""}`} onClick={() => nav.chart(i)}><span title={`${i.symbol} · ${i.exchange}`}><b>{i.symbol}</b> <span className="muted small">{i.exchange}</span></span>
+                {quotes && k < 25 && <QuoteCell exchange={i.exchange} symbol={i.symbol} />}</button></li>
             ))}
             {cur.items.length === 0 && <li className="muted small">Empty list.</li>}
           </ul>
         )}
-        <p className="muted small">Prices appear here once the market-data adapter is connected.</p>
+        <p className="muted small">{quotes ? "Quotes via the read-only market-data adapter (first 25 symbols, refreshed every minute). The badge shows whether a price is live or from the last session." : "Prices appear here once the market-data adapter is connected."}</p>
       </section>
     </aside>
   );
@@ -338,7 +355,7 @@ const Shell: FC<{ user: User; onLogout: () => void }> = ({ user, onLogout }) => 
         </footer>
       </div>
       {rightOpen && <Splitter size={rightW} onSize={(n) => savePrefs({ panel_sizes: { ...prefs.panel_sizes, right: n } })} min={220} max={520} side="right" label="Resize context panel" />}
-      {rightOpen && <ContextPanel instrument={instrument} nav={nav} onClose={() => savePrefs({ right_panel_open: false })} />}
+      {rightOpen && <ContextPanel instrument={instrument} nav={nav} quotes={Boolean(config?.marketdataConfigured)} onClose={() => savePrefs({ right_panel_open: false })} />}
       <Palette open={Boolean(palette)} onClose={() => setPalette(null)} isAdmin={isAdmin}
         onPick={(i) => { palette?.({ exchange: i.exchange, symbol: i.symbol }); }} onView={(v) => go(v)} />
       <AddToWatchlist target={addTarget} onClose={() => setAddTarget(null)} />

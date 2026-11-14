@@ -20,9 +20,12 @@ copilot ──(breakout_integration network, mTLS or HMAC)──▶ adapter ─�
 
 | Adapter route | OpenAlgo call | Notes |
 |---|---|---|
-| `POST /v1/quote` `{exchange, symbol}` | `POST /api/v1/quotes` | Exchange must be in `VALID_EXCHANGES`; symbol checked against the instrument master |
-| `POST /v1/depth` `{exchange, symbol}` | `POST /api/v1/depth` | Optional; enable only if needed |
-| `POST /v1/funds` `{}` | `POST /api/v1/funds` | Account-level; per-user authorisation in Breakout |
+| `POST /v1/quote` `{exchange, symbol}` | `POST /api/v1/quotes` | **Implemented.** Exchange must be in `VALID_EXCHANGES`. OpenAlgo quotes carry no tick time, so Breakout labels a quote LIVE only during the NSE session and MARKET CLOSED otherwise |
+| `POST /v1/history` `{exchange, symbol, interval, from, to}` | `POST /api/v1/history` | **Implemented.** Epoch-second candles, OHLC-consistent and time-ordered or rejected whole. Breakout derives LIVE / DELAYED / MARKET CLOSED from the latest bar |
+| `POST /v1/symbol` `{exchange, symbol}` | `POST /api/v1/symbol` | **Implemented.** Instrument-master entry (lot size, tick size, expiry, type, token); broker-internal fields dropped |
+| `POST /v1/expiry` `{exchange, symbol, kind}` | `POST /api/v1/expiry` | **Implemented.** F&O expiry dates; used to resolve the near-month future and check its lot size against TradeOS |
+| `POST /v1/ping` `{}` | `POST /api/v1/ping` | **Implemented.** Proves the adapter's OpenAlgo credential works; returns the broker name only |
+| `POST /v1/depth`, `POST /v1/funds` | — | Not implemented. Account-level reads need per-user authorisation first |
 
 - **Hard-coded routes:** the OpenAlgo method and path are fixed per adapter route. There is no URL, path or method parameter.
 - **Unreachable order routes:** `placeorder`, `placesmartorder`, `modifyorder`, `cancelorder`, `cancelallorder`, `closeposition`, `basketorder`, `splitorder` and `optionsorder` don't exist in the code at all. A test asserts that the adapter's outbound path set is exactly the allowlist.
@@ -34,7 +37,7 @@ copilot ──(breakout_integration network, mTLS or HMAC)──▶ adapter ─�
 - **Per-user authorisation:** Breakout passes the user ID, and the adapter checks it against its own allowlist of users permitted to read account data.
 - **Limits:** a 3 s timeout per call, no retries on POST, and per-route rate limits.
 - **Audit logs:** user, route, instrument, status and latency. Never keys or account balances.
-- **Instrument master readiness:** the adapter refuses quotes until OpenAlgo's master contract download for the trading day is confirmed. The exact readiness signal still needs to be verified against the deployed version.
+- **Instrument master readiness:** OpenAlgo answers "Symbol … not found" when its master contract has not been downloaded. Breakout reports that through `/api/instruments/contract` (and the futures-expiry lookup) rather than guessing a contract.
 
 ## Open items before implementation
 

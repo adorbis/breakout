@@ -363,3 +363,15 @@ th.sortable button { all: unset; cursor: pointer; } th.sortable button:focus-vis
 .sym-link { background: none; border: 0; padding: 0; color: var(--link); cursor: pointer; font: inherit; }
 @media (max-width: 860px) { .wl { grid-template-columns: 1fr; } }
 .date-field { display: inline-flex; align-items: center; gap: 6px; } .date-field input { width: 150px; }
+
+/* --- Market-data state badge (ui.tsx DataStateBadge) -------------------------------------- */
+.ds { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; padding: 1px 6px; border-radius: 4px; border: 1px solid currentColor; vertical-align: middle; white-space: nowrap; }
+.ds-live { color: var(--up); }
+.ds-delayed { color: var(--warn-fg); background: var(--warn-bg); }
+.ds-closed { color: var(--muted); }
+.ds-demo { color: var(--err-fg); background: var(--err-bg); }
+.ds-unavailable { color: var(--err-fg); }
+.wl-sym { display: flex; justify-content: space-between; align-items: center; gap: 6px; width: 100%; min-width: 0; }
+.wl-sym > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-q { display: inline-flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 2px 6px; font-variant-numeric: tabular-nums; flex: none; max-width: 60%; }
+.wl-q .ds { font-size: 9px; padding: 0 4px; }
