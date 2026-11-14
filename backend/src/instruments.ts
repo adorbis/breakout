@@ -105,7 +105,7 @@ export function sessionClock(now: Date = new Date()): SessionClock {
 
 // --- demo candles (development only, always labelled "demo") ------------------
 
-export const CANDLE_INTERVALS = ["5minute", "15minute", "30minute", "day"] as const;
+export const CANDLE_INTERVALS = ["1minute", "5minute", "15minute", "30minute", "60minute", "day"] as const;
 export type CandleInterval = (typeof CANDLE_INTERVALS)[number];
 
 export interface Candle { time: string; open: number; high: number; low: number; close: number; volume: number }
@@ -114,7 +114,7 @@ export interface Candle { time: string; open: number; high: number; low: number;
 export function demoCandles(symbol: string, interval: CandleInterval, count = 120, now: Date = new Date()): {
   source: "demo"; interval: string; candles: Candle[]; note: string;
 } {
-  const stepMin = interval === "day" ? 375 : interval === "30minute" ? 30 : interval === "15minute" ? 15 : 5;
+  const stepMin = { "1minute": 1, "5minute": 5, "15minute": 15, "30minute": 30, "60minute": 60, day: 375 }[interval];
   let seed = 0;
   for (const ch of symbol) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
   const rand = () => {

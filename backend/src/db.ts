@@ -91,7 +91,62 @@ export const MIGRATIONS: string[] = [
      added_at TEXT NOT NULL,
      UNIQUE (watchlist_id, exchange, symbol));
    CREATE INDEX watchlist_items_list ON watchlist_items(watchlist_id, sort_order);`,
+  // 5: account profile + authorization role. Admin is granted only through
+  // the CLI (cli.ts set-role); registration always creates 'trader'.
+  `ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'trader' CHECK (role IN ('trader','admin'));
+   ALTER TABLE users ADD COLUMN display_name TEXT;
+   ALTER TABLE users ADD COLUMN email TEXT;
+   ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'early_access';
+   ALTER TABLE users ADD COLUMN password_changed_at TEXT;`,
+  // 6: alerts mirrored from TradeOS's ntfy topic (read-only transport), the
+  // per-user acknowledgement state, Breakout-generated notifications, and a
+  // small key/value table for poller cursors. Alerts are TradeOS's; only the
+  // acknowledgement and notification rows are Breakout's own.
+  `CREATE TABLE alerts (
+     id TEXT PRIMARY KEY,
+     source TEXT NOT NULL,
+     topic TEXT NOT NULL,
+     event_time TEXT NOT NULL,
+     title TEXT,
+     message TEXT NOT NULL,
+     priority INTEGER,
+     tags TEXT NOT NULL DEFAULT '[]',
+     received_at TEXT NOT NULL);
+   CREATE INDEX alerts_time ON alerts(event_time DESC);
+   CREATE TABLE alert_acks (
+     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     alert_id TEXT NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+     acknowledged_at TEXT NOT NULL,
+     PRIMARY KEY (user_id, alert_id));
+   CREATE TABLE notifications (
+     id TEXT PRIMARY KEY,
+     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     kind TEXT NOT NULL,
+     title TEXT NOT NULL,
+     body TEXT,
+     ref TEXT,
+     created_at TEXT NOT NULL,
+     read_at TEXT);
+   CREATE INDEX notifications_user ON notifications(user_id, created_at DESC);
+   CREATE TABLE kv (
+     key TEXT PRIMARY KEY,
+     value TEXT NOT NULL,
+     updated_at TEXT NOT NULL);`,
 ];
+
+export type UserRole = "trader" | "admin";
+export interface UserProfile {
+  id: string; username: string; role: UserRole; display_name: string | null; email: string | null;
+  plan: string; created_at: string; password_changed_at: string | null;
+}
+export interface AlertRow {
+  id: string; source: string; topic: string; event_time: string; title: string | null; message: string;
+  priority: number | null; tags: string; received_at: string;
+}
+export interface NotificationRow {
+  id: string; user_id: string; kind: string; title: string; body: string | null; ref: string | null;
+  created_at: string; read_at: string | null;
+}
 
 const now = () => new Date().toISOString();
 
@@ -123,23 +178,147 @@ export class Store {
   close(): void { this.db.close(); }
 
   // --- users / sessions -----------------------------------------------------
-  createUser(id: string, username: string, passwordHash: string): void {
-    this.db.prepare("INSERT INTO users (id, username, password_hash, created_at) VALUES (?,?,?,?)")
-      .run(id, username, passwordHash, now());
+  createUser(id: string, username: string, passwordHash: string, extra: { display_name?: string | null; email?: string | null } = {}): void {
+    this.db.prepare("INSERT INTO users (id, username, password_hash, created_at, display_name, email) VALUES (?,?,?,?,?,?)")
+      .run(id, username, passwordHash, now(), extra.display_name ?? null, extra.email ?? null);
   }
   findUserByName(username: string) {
-    return this.db.prepare("SELECT id, username, password_hash, disabled FROM users WHERE username = ?")
-      .get(username) as { id: string; username: string; password_hash: string; disabled: number } | undefined;
+    return this.db.prepare("SELECT id, username, password_hash, disabled, role FROM users WHERE username = ?")
+      .get(username) as { id: string; username: string; password_hash: string; disabled: number; role: UserRole } | undefined;
   }
+  getProfile(userId: string): UserProfile | undefined {
+    return this.db.prepare(
+      "SELECT id, username, role, display_name, email, plan, created_at, password_changed_at FROM users WHERE id = ?",
+    ).get(userId) as unknown as UserProfile | undefined;
+  }
+  updateProfile(userId: string, fields: { display_name?: string | null; email?: string | null }): void {
+    const sets: string[] = []; const args: (string | null)[] = [];
+    if (fields.display_name !== undefined) { sets.push("display_name = ?"); args.push(fields.display_name); }
+    if (fields.email !== undefined) { sets.push("email = ?"); args.push(fields.email); }
+    if (!sets.length) return;
+    this.db.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`).run(...args, userId);
+  }
+  getPasswordHash(userId: string): string | undefined {
+    return (this.db.prepare("SELECT password_hash FROM users WHERE id = ?").get(userId) as { password_hash: string } | undefined)?.password_hash;
+  }
+  /** Replace the password and end every other session for the account. */
+  setPassword(userId: string, hash: string, keepSessionHash: string | null): void {
+    this.db.exec("BEGIN");
+    try {
+      this.db.prepare("UPDATE users SET password_hash = ?, password_changed_at = ? WHERE id = ?").run(hash, now(), userId);
+      this.db.prepare("DELETE FROM sessions WHERE user_id = ? AND token_hash IS NOT ?").run(userId, keepSessionHash);
+      this.db.exec("COMMIT");
+    } catch (e) { this.db.exec("ROLLBACK"); throw e; }
+  }
+  setRole(username: string, role: UserRole): boolean {
+    return Number(this.db.prepare("UPDATE users SET role = ? WHERE username = ?").run(role, username).changes) > 0;
+  }
+  setDisabled(username: string, disabled: boolean): boolean {
+    const r = this.db.prepare("UPDATE users SET disabled = ? WHERE username = ?").run(disabled ? 1 : 0, username);
+    if (disabled) this.db.prepare("DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE username = ?)").run(username);
+    return Number(r.changes) > 0;
+  }
+  listUsers(): (UserProfile & { disabled: number })[] {
+    return this.db.prepare(
+      "SELECT id, username, role, display_name, email, plan, created_at, password_changed_at, disabled FROM users ORDER BY created_at",
+    ).all() as unknown as (UserProfile & { disabled: number })[];
+  }
+
+  // --- alerts (mirrored, read-only from TradeOS) + per-user acks ---------------
+  /** Insert if new; returns true when the alert was not seen before. */
+  insertAlert(a: Omit<AlertRow, "received_at">): boolean {
+    const r = this.db.prepare(
+      `INSERT OR IGNORE INTO alerts (id, source, topic, event_time, title, message, priority, tags, received_at)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+    ).run(a.id, a.source, a.topic, a.event_time, a.title, a.message, a.priority, a.tags, now());
+    return Number(r.changes) > 0;
+  }
+  listAlerts(userId: string, opts: { limit?: number; before?: string; unacknowledged?: boolean; q?: string; minPriority?: number } = {}) {
+    const where: string[] = []; const args: (string | number)[] = [userId];
+    if (opts.before) { where.push("a.event_time < ?"); args.push(opts.before); }
+    if (opts.unacknowledged) where.push("k.alert_id IS NULL");
+    if (opts.minPriority) { where.push("COALESCE(a.priority, 3) >= ?"); args.push(opts.minPriority); }
+    if (opts.q) { where.push("(a.title LIKE ? ESCAPE '\\' OR a.message LIKE ? ESCAPE '\\')"); const p = `%${opts.q.replace(/[%_\\]/g, "\\$&")}%`; args.push(p, p); }
+    args.push(Math.min(opts.limit ?? 100, 500));
+    return this.db.prepare(
+      `SELECT a.*, k.acknowledged_at FROM alerts a
+       LEFT JOIN alert_acks k ON k.alert_id = a.id AND k.user_id = ?
+       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+       ORDER BY a.event_time DESC LIMIT ?`,
+    ).all(...args) as unknown as (AlertRow & { acknowledged_at: string | null })[];
+  }
+  countUnacknowledgedAlerts(userId: string): number {
+    return (this.db.prepare(
+      `SELECT COUNT(*) AS n FROM alerts a LEFT JOIN alert_acks k ON k.alert_id = a.id AND k.user_id = ? WHERE k.alert_id IS NULL`,
+    ).get(userId) as { n: number }).n;
+  }
+  acknowledgeAlerts(userId: string, ids: string[] | "all"): number {
+    if (ids === "all") {
+      return Number(this.db.prepare(
+        `INSERT OR IGNORE INTO alert_acks (user_id, alert_id, acknowledged_at) SELECT ?, id, ? FROM alerts`,
+      ).run(userId, now()).changes);
+    }
+    const stmt = this.db.prepare("INSERT OR IGNORE INTO alert_acks (user_id, alert_id, acknowledged_at) SELECT ?, id, ? FROM alerts WHERE id = ?");
+    let n = 0;
+    for (const id of ids) n += Number(stmt.run(userId, now(), id).changes);
+    return n;
+  }
+  latestAlert(): AlertRow | undefined {
+    return this.db.prepare("SELECT * FROM alerts ORDER BY event_time DESC LIMIT 1").get() as unknown as AlertRow | undefined;
+  }
+
+  // --- notifications (Breakout-generated, owner-scoped) -----------------------
+  addNotification(n: { user_id: string; kind: string; title: string; body: string | null; ref: string | null }): string {
+    const id = randomId();
+    this.db.prepare("INSERT INTO notifications (id, user_id, kind, title, body, ref, created_at) VALUES (?,?,?,?,?,?,?)")
+      .run(id, n.user_id, n.kind, n.title, n.body, n.ref, now());
+    return id;
+  }
+  listNotifications(userId: string, limit = 50): NotificationRow[] {
+    return this.db.prepare("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+      .all(userId, Math.min(limit, 200)) as unknown as NotificationRow[];
+  }
+  countUnreadNotifications(userId: string): number {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read_at IS NULL").get(userId) as { n: number }).n;
+  }
+  markNotificationsRead(userId: string, ids: string[] | "all"): number {
+    if (ids === "all") return Number(this.db.prepare("UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL").run(now(), userId).changes);
+    const stmt = this.db.prepare("UPDATE notifications SET read_at = ? WHERE id = ? AND user_id = ? AND read_at IS NULL");
+    let n = 0;
+    for (const id of ids) n += Number(stmt.run(now(), id, userId).changes);
+    return n;
+  }
+  deleteNotification(userId: string, id: string): boolean {
+    return Number(this.db.prepare("DELETE FROM notifications WHERE id = ? AND user_id = ?").run(id, userId).changes) > 0;
+  }
+  /** Users whose watchlists contain any of the given symbols (for alert → notification fan-out). */
+  usersWatching(symbols: string[]): { user_id: string; symbol: string }[] {
+    if (!symbols.length) return [];
+    const marks = symbols.map(() => "?").join(",");
+    return this.db.prepare(
+      `SELECT DISTINCT w.user_id, wi.symbol FROM watchlist_items wi JOIN watchlists w ON w.id = wi.watchlist_id
+       JOIN users u ON u.id = w.user_id WHERE u.disabled = 0 AND wi.symbol IN (${marks})`,
+    ).all(...symbols) as { user_id: string; symbol: string }[];
+  }
+
+  // --- kv (poller cursors) ---------------------------------------------------
+  getKv(key: string): string | undefined {
+    return (this.db.prepare("SELECT value FROM kv WHERE key = ?").get(key) as { value: string } | undefined)?.value;
+  }
+  setKv(key: string, value: string): void {
+    this.db.prepare("INSERT INTO kv (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+      .run(key, value, now());
+  }
+
   createSession(tokenHash: string, userId: string, expiresAt: string): void {
     this.db.prepare("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?,?,?,?)")
       .run(tokenHash, userId, now(), expiresAt);
   }
   findSession(tokenHash: string) {
     return this.db.prepare(
-      `SELECT s.user_id, u.username FROM sessions s JOIN users u ON u.id = s.user_id
+      `SELECT s.user_id, u.username, u.role FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled = 0`,
-    ).get(tokenHash, now()) as { user_id: string; username: string } | undefined;
+    ).get(tokenHash, now()) as { user_id: string; username: string; role: UserRole } | undefined;
   }
   deleteSession(tokenHash: string): void {
     this.db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash);

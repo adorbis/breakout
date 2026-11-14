@@ -247,7 +247,17 @@ test("T9 no write or order path exists toward TradeOS or a broker", () => {
   const src = readFileSync(new URL("../src/tradeos.ts", import.meta.url), "utf8");
   assert.match(src, /method: "GET"/);
   assert.doesNotMatch(src, /method: "(POST|PUT|PATCH|DELETE)"/);
-  const all = readdirSync(new URL("../src/", import.meta.url)).map((f) => readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8")).join("\n");
+  // Recursive: every module under src/ (incl. src/bridge/) is scanned.
+  const root = new URL("../src/", import.meta.url);
+  const all = (readdirSync(root, { recursive: true }) as string[])
+    .filter((f) => f.endsWith(".ts"))
+    .map((f) => readFileSync(new URL(f, root), "utf8")).join("\n");
+  // The bridge and alert transports are GET-only as well.
+  for (const f of ["bridge/client.ts", "alerts.ts"]) {
+    const s = readFileSync(new URL(f, root), "utf8");
+    assert.match(s, /method: "GET"/, f);
+    assert.doesNotMatch(s, /method: "(POST|PUT|PATCH|DELETE)"/, f);
+  }
   for (const bad of [/placeorder/i, /placesmartorder/i, /cancelorder/i, /modifyorder/i, /closeposition/i, /\/trade\//, /square[-_ ]?off/i]) {
     assert.doesNotMatch(all, bad);
   }

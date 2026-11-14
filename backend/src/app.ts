@@ -14,7 +14,11 @@ import { TradingContext, EXCHANGES, buildSystemPrompt } from "./policy.ts";
 import { TOOL_REGISTRY, enabledToolSet } from "./tools.ts";
 import { createTradeOS, type TradeOS } from "./tradeos.ts";
 import { createIntegrations, type Integrations } from "./integrations.ts";
-import { searchCatalog, findInstrument, sessionClock, demoCandles, CANDLE_INTERVALS, type CandleInterval } from "./instruments.ts";
+import { findInstrument, sessionClock, CANDLE_INTERVALS } from "./instruments.ts";
+import { createBridge, type Bridge } from "./bridge/index.ts";
+import { createAlertsPoller, type AlertsPoller } from "./alerts.ts";
+import { createMarketData, type MarketData } from "./marketdata.ts";
+import { mountFeatures, PASSWORD_MIN } from "./features.ts";
 import { log } from "./log.ts";
 
 const MAX_USER_CHARS = 8000;
@@ -49,7 +53,16 @@ const ConversationPatch = z.object({
   context: TradingContext.nullable().optional(),
 }).strict();
 const Login = z.object({ username: z.string().min(1).max(64), password: z.string().min(1).max(256) }).strict();
+const Register = z.object({
+  username: z.string().regex(/^[A-Za-z0-9_.-]{3,64}$/),
+  password: z.string().min(PASSWORD_MIN).max(256),
+  display_name: z.string().trim().max(80).nullable().optional(),
+  email: z.string().trim().max(200).email().nullable().optional(),
+}).strict();
 
+const VIEWS = ["dashboard", "market", "scanner", "watchlists", "chart", "analysis", "positions", "alerts", "copilot",
+  "notifications", "profile", "settings", "account", "admin"] as const;
+const INDICATORS = ["volume", "sma20", "sma50", "ema20", "vwap", "levels"] as const;
 const SymbolField = z.string().trim().toUpperCase().regex(/^[A-Z0-9][A-Z0-9&_.\- ]{0,39}$/, "symbol: letters, digits, & _ . - (max 40)");
 const WatchlistCreate = z.object({ name: z.string().trim().min(1).max(40) }).strict();
 const WatchlistPatch = z.object({ name: z.string().trim().min(1).max(40) }).strict();
@@ -61,14 +74,24 @@ const WatchlistItemAdd = z.object({
 }).strict();
 const PreferencesPatch = z.object({
   theme: z.enum(["system", "light", "dark"]).optional(),
-  default_view: z.enum(["dashboard", "copilot", "watchlists", "scanner", "positions", "settings"]).optional(),
+  default_view: z.enum(VIEWS).optional(),
   default_exchange: z.enum(EXCHANGES).optional(),
   chart_interval: z.enum(CANDLE_INTERVALS).optional(),
   auto_refresh_seconds: z.number().int().min(0).max(300).optional(),
+  sidebar_collapsed: z.boolean().optional(),
+  right_panel_open: z.boolean().optional(),
+  chart_layout: z.enum(["single", "split", "grid"]).optional(),
+  chart_indicators: z.array(z.enum(INDICATORS)).max(INDICATORS.length).optional(),
+  panel_sizes: z.record(z.string().regex(/^[a-z_]{1,30}$/), z.number().min(120).max(1600)).optional()
+    .refine((v) => v === undefined || Object.keys(v).length <= 10, "too many panels"),
+  alert_min_priority: z.number().int().min(1).max(5).optional(),
+  density: z.enum(["comfortable", "compact"]).optional(),
 }).strict();
 const DEFAULT_PREFERENCES = {
   theme: "system", default_view: "dashboard", default_exchange: "NSE",
   chart_interval: "30minute", auto_refresh_seconds: 30,
+  sidebar_collapsed: false, right_panel_open: true, chart_layout: "single",
+  chart_indicators: ["volume", "levels"], panel_sizes: {}, alert_min_priority: 1, density: "comfortable",
 } as const;
 const MAX_WATCHLISTS = 20;
 const MAX_ITEMS_PER_LIST = 100;
@@ -95,10 +118,16 @@ function titleFrom(text: string): string {
   return t.length > 60 ? `${t.slice(0, 57)}…` : t || "New conversation";
 }
 
-export function createApp(deps: { cfg: Config; store: Store; gateway: Gateway; tradeos?: TradeOS; integrations?: Integrations }) {
+export function createApp(deps: {
+  cfg: Config; store: Store; gateway: Gateway; tradeos?: TradeOS; integrations?: Integrations;
+  bridge?: Bridge; alerts?: AlertsPoller; marketdata?: MarketData;
+}) {
   const { cfg, store, gateway } = deps;
   const tradeos = deps.tradeos ?? createTradeOS(cfg);
-  const integrations = deps.integrations ?? createIntegrations({ cfg, tradeos, gateway });
+  const bridge = deps.bridge ?? createBridge(cfg);
+  const alerts = deps.alerts ?? createAlertsPoller(cfg, store);
+  const marketdata = deps.marketdata ?? createMarketData(cfg);
+  const integrations = deps.integrations ?? createIntegrations({ cfg, tradeos, gateway, bridge, alerts, marketdata });
   const auth = createAuth(store, cfg);
   const chatLimiter = new RateLimiter(cfg.BREAKOUT_CHAT_RATE_PER_MIN);
   const loginLimiter = new RateLimiter(cfg.BREAKOUT_LOGIN_RATE_PER_MIN);
@@ -136,11 +165,34 @@ export function createApp(deps: { cfg: Config; store: Store; gateway: Gateway; t
     return c.json({ user });
   });
   app.post("/api/auth/logout", (c) => { auth.logout(c); return c.json({ ok: true }); });
+  app.post("/api/auth/register", async (c) => {
+    if (cfg.BREAKOUT_REGISTRATION !== "open") {
+      return c.json(err("registration_closed", "Registration is by invitation during early access. Contact us to request an account."), 403);
+    }
+    const ip = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+    if (loginLimiter.take(`register:${ip}`)) return c.json(err("rate_limited", "Too many attempts. Try again shortly."), 429);
+    const body = Register.safeParse(await c.req.json().catch(() => null));
+    if (!body.success) {
+      return c.json(err("bad_request", `Username: 3–64 letters, digits, _ . - ; password: at least ${PASSWORD_MIN} characters; email must be valid if given.`), 400);
+    }
+    const r = await auth.register(c, { username: body.data.username, password: body.data.password,
+      display_name: body.data.display_name ?? null, email: body.data.email ?? null });
+    if (r === "taken") return c.json(err("conflict", "That username is taken."), 409);
+    log.info("auth.register", { user: r.username });
+    return c.json({ user: r }, 201);
+  });
+  // Public, unauthenticated product facts for the landing site. No data feeds.
+  app.get("/api/public/info", (c) => c.json({
+    registration: cfg.BREAKOUT_REGISTRATION,
+    release: "Release 1 — early access",
+    read_only: true,
+    plans: [{ id: "early_access", name: "Early Access", price: null, note: "No payment is collected during early access." }],
+  }));
 
   const api = new Hono<AppEnv>();
   api.use("*", auth.requireUser);
 
-  api.get("/me", (c) => c.json({ user: c.get("user") }));
+  api.get("/me", (c) => c.json({ user: c.get("user"), profile: store.getProfile(c.get("user").id) ?? null }));
 
   api.get("/config", (c) => c.json({
     models: gateway.listModels(),
@@ -149,6 +201,9 @@ export function createApp(deps: { cfg: Config; store: Store; gateway: Gateway; t
     exchanges: EXCHANGES,
     tools: TOOL_REGISTRY,
     openalgoConfigured: Boolean(cfg.OPENALGO_BASE_URL),
+    marketdataConfigured: marketdata.configured,
+    bridgeEnabled: bridge.enabled,
+    alertsConfigured: alerts.configured,
     demoData: cfg.BREAKOUT_DEMO_DATA,
   }));
 
@@ -234,26 +289,8 @@ export function createApp(deps: { cfg: Config; store: Store; gateway: Gateway; t
     return c.json({ ok: true });
   });
 
-  // --- instrument reference data (independent; explicit sourcing) ---------------------
-  api.get("/instruments/search", (c) => {
-    const q = c.req.query("q") ?? "";
-    return c.json(searchCatalog(q));
-  });
-  api.get("/instruments/candles", (c) => {
-    const exchange = (c.req.query("exchange") ?? "NSE").toUpperCase();
-    const symbol = (c.req.query("symbol") ?? "").toUpperCase();
-    const interval = (c.req.query("interval") ?? "30minute") as CandleInterval;
-    if (!symbol) return c.json(err("bad_request", "symbol is required."), 400);
-    if (!CANDLE_INTERVALS.includes(interval)) return c.json(err("bad_request", "Unknown interval."), 400);
-    if (cfg.BREAKOUT_DEMO_DATA) return c.json(demoCandles(symbol, interval));
-    const known = findInstrument(exchange, symbol);
-    return c.json({
-      source: "unavailable",
-      reason: known
-        ? "Live candle data is not connected. The read-only OpenAlgo adapter is a separate, approved service (see the Integration Health panel)."
-        : "Live candle data is not connected, and this symbol is not in the sample catalog.",
-    }, 503);
-  });
+  // --- trader features (profile, intel bridge, instruments, alerts, admin) -----------
+  mountFeatures(api, { cfg, store, auth, bridge, alerts, marketdata, integrations, tradeos, gateway });
 
   // --- conversations ------------------------------------------------------------
   api.get("/conversations", (c) => c.json({ conversations: store.listConversations(c.get("user").id).map(conversationView) }));
@@ -423,5 +460,5 @@ export function createApp(deps: { cfg: Config; store: Store; gateway: Gateway; t
   });
 
   app.route("/api", api);
-  return app;
+  return Object.assign(app, { alerts });
 }

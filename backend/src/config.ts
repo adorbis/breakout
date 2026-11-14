@@ -43,12 +43,54 @@ const Env = z.object({
   // docs/integrations/OPENALGO_ADAPTER_DESIGN.md) that is not built yet; the
   // Copilot never holds an OpenAlgo key or calls OpenAlgo directly.
   OPENALGO_BASE_URL: z.string().url().optional(),
+
+  // TradeOS BRIDGE (audit Phase B): read-only use of today's unversioned
+  // TradeOS GET routes while /v1 is unimplemented. Off by default. Uses
+  // TRADEOS_BASE_URL, which must then be a loopback/private address (public
+  // hostnames are refused). No credential is sent, and only GETs on a fixed
+  // allowlist are made: the bridge is a read-only stopgap, not a contract.
+  TRADEOS_BRIDGE_ENABLED: bool.default(false),
+
+  // Alerts: ntfy subscription (read-only poll). Set NTFY_TOPIC per deployment.
+  NTFY_BASE_URL: z.string().url().optional(),
+  NTFY_TOPIC: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).default("breakout-alerts"),
+  NTFY_TOKEN: z.string().optional(),
+  NTFY_POLL_SECONDS: z.coerce.number().int().min(10).max(3600).default(30),
+
+  // Market data via the separate read-only Integration Adapter
+  // (docs/integrations/OPENALGO_ADAPTER_DESIGN.md). Breakout holds only the
+  // HMAC key shared with the adapter — never an OpenAlgo API key.
+  MARKETDATA_ADAPTER_URL: z.string().url().optional(),
+  MARKETDATA_ADAPTER_HMAC_KEY: z.string().optional(),
+  MARKETDATA_TIMEOUT_MS: z.coerce.number().int().min(200).max(30_000).default(3000),
+
+  // Account self-registration from the public site. "closed" = accounts are
+  // created by an administrator (cli.ts); "open" = anyone may register.
+  BREAKOUT_REGISTRATION: z.enum(["open", "closed"]).default("closed"),
+
   // Development aid: synthetic candles and prices, clearly labelled "demo".
   // Never on in production; never presented as market data.
   BREAKOUT_DEMO_DATA: bool.default(false),
 });
 
 export type Config = z.infer<typeof Env>;
+
+/**
+ * Loopback, RFC 1918/ULA/link-local literal, or a single-label name (a
+ * Compose service on a private network). Anything with a public-looking
+ * dotted hostname is refused for bridge traffic.
+ */
+export function isPrivateHost(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, "").toLowerCase();
+  if (h === "localhost" || h === "::1") return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (m) {
+    const [a, b] = [Number(m[1]), Number(m[2])];
+    return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
+  }
+  if (/^f[cd][0-9a-f]{2}:/.test(h) || h.startsWith("fe80:")) return true;
+  return /^[a-z0-9][a-z0-9_-]{0,62}$/.test(h);
+}
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = Env.safeParse(env);
@@ -60,6 +102,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const cfg = parsed.data;
   if (cfg.ADORBIS_API_KEY !== undefined && cfg.ADORBIS_API_KEY.trim() === "") cfg.ADORBIS_API_KEY = undefined;
   if (cfg.TRADEOS_SERVICE_TOKEN !== undefined && cfg.TRADEOS_SERVICE_TOKEN.trim() === "") cfg.TRADEOS_SERVICE_TOKEN = undefined;
+  if (cfg.NTFY_TOKEN !== undefined && cfg.NTFY_TOKEN.trim() === "") cfg.NTFY_TOKEN = undefined;
+  if (cfg.MARKETDATA_ADAPTER_HMAC_KEY !== undefined && cfg.MARKETDATA_ADAPTER_HMAC_KEY.trim() === "") cfg.MARKETDATA_ADAPTER_HMAC_KEY = undefined;
+  if (cfg.MARKETDATA_ADAPTER_HMAC_KEY !== undefined && cfg.MARKETDATA_ADAPTER_HMAC_KEY.length < 32) {
+    throw new Error("invalid configuration: MARKETDATA_ADAPTER_HMAC_KEY must be at least 32 characters");
+  }
+  if (cfg.TRADEOS_BRIDGE_ENABLED) {
+    if (!cfg.TRADEOS_BASE_URL) throw new Error("invalid configuration: TRADEOS_BRIDGE_ENABLED requires TRADEOS_BASE_URL");
+    if (!isPrivateHost(new URL(cfg.TRADEOS_BASE_URL).hostname)) {
+      throw new Error("invalid configuration: TRADEOS_BASE_URL must be a loopback/private address when the bridge is enabled");
+    }
+  }
   if (!cfg.ADORBIS_MODELS.includes(cfg.ADORBIS_DEFAULT_MODEL)) {
     throw new Error("invalid configuration: ADORBIS_DEFAULT_MODEL must be one of ADORBIS_MODELS");
   }

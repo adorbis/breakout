@@ -12,11 +12,14 @@ const cfg = loadConfig();
 configureLogger(cfg.BREAKOUT_LOG_LEVEL);
 registerSecret(cfg.ADORBIS_API_KEY);
 registerSecret(cfg.TRADEOS_SERVICE_TOKEN);
+registerSecret(cfg.NTFY_TOKEN);
+registerSecret(cfg.MARKETDATA_ADAPTER_HMAC_KEY);
 
 const store = new Store(cfg.BREAKOUT_DB_PATH);
 store.purgeExpiredSessions();
 const gateway = createGateway(cfg);
 const app = createApp({ cfg, store, gateway });
+app.alerts.start();
 
 if (cfg.BREAKOUT_STATIC_DIR) {
   const root = relative(process.cwd(), cfg.BREAKOUT_STATIC_DIR) || ".";
@@ -26,12 +29,14 @@ if (cfg.BREAKOUT_STATIC_DIR) {
 }
 
 const server = serve({ fetch: app.fetch, hostname: cfg.BREAKOUT_HTTP_BIND, port: cfg.BREAKOUT_HTTP_PORT }, (info) => {
-  log.info("server.start", { bind: info.address, port: info.port, env: cfg.BREAKOUT_ENV, gatewayConfigured: gateway.configured });
+  log.info("server.start", { bind: info.address, port: info.port, env: cfg.BREAKOUT_ENV, gatewayConfigured: gateway.configured,
+    bridge: cfg.TRADEOS_BRIDGE_ENABLED, alerts: app.alerts.configured, registration: cfg.BREAKOUT_REGISTRATION });
 });
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
     log.info("server.stop", { signal: sig });
+    app.alerts.stop();
     server.close(() => { store.close(); process.exit(0); });
     setTimeout(() => process.exit(0), 10_000).unref();
   });

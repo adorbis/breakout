@@ -1,0 +1,66 @@
+{
+ "status": "success",
+ "count": 6,
+ "last_refreshed": null,
+ "instrument_master_cache": {
+  "downloaded_at": null,
+  "count": null,
+  "url": null
+ },
+ "instruments": [
+  {
+   "symbol": "360ONE",
+   "instrument_key": "NSE_EQ|INE466L01038",
+   "lot_size": 500,
+   "segment": null,
+   "active": true,
+   "updated_at": "2026-07-14T04:35:26.271231+00:00",
+   "date": "2026-07-14"
+  },
+  {
+   "symbol": "ABB",
+   "instrument_key": "NSE_EQ|INE117A01022",
+   "lot_size": 125,
+   "segment": null,
+   "active": true,
+   "updated_at": "2026-07-14T04:35:26.271231+00:00",
+   "date": "2026-07-14"
+  },
+  {
+   "symbol": "ABCAPITAL",
+   "instrument_key": "NSE_EQ|INE674K01013",
+   "lot_size": 1550,
+   "segment": null,
+   "active": true,
+   "updated_at": "2026-07-14T04:35:26.271231+00:00",
+   "date": "2026-07-14"
+  },
+  {
+   "symbol": "ADANIENSOL",
+   "instrument_key": "NSE_EQ|INE931S01010",
+   "lot_size": 675,
+   "segment": null,
+   "active": true,
+   "updated_at": "2026-07-14T04:35:26.271231+00:00",
+   "date": "2026-07-14"
+  },
+  {
+   "symbol": "ADANIENT",
+   "instrument_key": "NSE_EQ|INE423A01024",
+   "lot_size": 309,
+   "segment": "CONGL",
+   "active": true,
+   "updated_at": "2026-04-02T06:38:43.727018+00:00",
+   "date": "2026-04-02"
+  },
+  {
+   "symbol": "ADANIGREEN",
+   "instrument_key": "NSE_EQ|INE364U01010",
+   "lot_size": 600,
+   "segment": "NSE_EQ",
+   "active": true,
+   "updated_at": "2026-07-07T07:02:29.236779+00:00",
+   "date": "2026-07-07"
+  }
+ ]
+}

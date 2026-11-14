@@ -4,7 +4,7 @@ import { randomBytes, scrypt as scryptCb, timingSafeEqual, createHash, randomUUI
 import { promisify } from "node:util";
 import type { Context, MiddlewareHandler } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
-import type { Store } from "./db.ts";
+import type { Store, UserRole } from "./db.ts";
 import type { Config } from "./config.ts";
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number, opts: object) => Promise<Buffer>;
@@ -31,7 +31,7 @@ const DUMMY_HASH = hashPassword(randomUUID());
 
 const tokenHash = (t: string) => createHash("sha256").update(t).digest("hex");
 
-export type AuthUser = { id: string; username: string };
+export type AuthUser = { id: string; username: string; role: UserRole };
 export type AppEnv = { Variables: { user: AuthUser } };
 
 export function createAuth(store: Store, cfg: Config) {
@@ -39,13 +39,41 @@ export function createAuth(store: Store, cfg: Config) {
     const user = store.findUserByName(username);
     const ok = await verifyPassword(password, user?.password_hash ?? (await DUMMY_HASH));
     if (!user || !ok || user.disabled) return null;
+    startSession(c, user.id);
+    return { id: user.id, username: user.username, role: user.role };
+  }
+
+  function startSession(c: Context, userId: string): void {
     const token = randomBytes(32).toString("base64url");
     const expires = new Date(Date.now() + cfg.BREAKOUT_SESSION_TTL_HOURS * 3600_000);
-    store.createSession(tokenHash(token), user.id, expires.toISOString());
+    store.createSession(tokenHash(token), userId, expires.toISOString());
     setCookie(c, SESSION_COOKIE, token, {
       httpOnly: true, secure: cfg.BREAKOUT_COOKIE_SECURE, sameSite: "Strict", path: "/", expires,
     });
-    return { id: user.id, username: user.username };
+  }
+
+  /** Self-registration (only when BREAKOUT_REGISTRATION=open). Always role 'trader'. */
+  async function register(c: Context, f: { username: string; password: string; display_name: string | null; email: string | null }):
+    Promise<AuthUser | "taken"> {
+    if (store.findUserByName(f.username)) return "taken";
+    const id = randomUUID();
+    try {
+      store.createUser(id, f.username, await hashPassword(f.password), { display_name: f.display_name, email: f.email });
+    } catch (e) {
+      if (e instanceof Error && e.message.includes("UNIQUE")) return "taken";
+      throw e;
+    }
+    startSession(c, id);
+    return { id, username: f.username, role: "trader" };
+  }
+
+  /** Verify the current password, set a new one, and end all other sessions. */
+  async function changePassword(c: Context, userId: string, current: string, next: string): Promise<boolean> {
+    const stored = store.getPasswordHash(userId);
+    if (!stored || !(await verifyPassword(current, stored))) return false;
+    const token = getCookie(c, SESSION_COOKIE);
+    store.setPassword(userId, await hashPassword(next), token ? tokenHash(token) : null);
+    return true;
   }
 
   function logout(c: Context): void {
@@ -58,7 +86,12 @@ export function createAuth(store: Store, cfg: Config) {
     const token = getCookie(c, SESSION_COOKIE);
     const session = token ? store.findSession(tokenHash(token)) : undefined;
     if (!session) return c.json({ error: { code: "unauthenticated", message: "Sign in required." } }, 401);
-    c.set("user", { id: session.user_id, username: session.username });
+    c.set("user", { id: session.user_id, username: session.username, role: session.role });
+    await next();
+  };
+
+  const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
+    if (c.get("user")?.role !== "admin") return c.json({ error: { code: "forbidden", message: "Administrator access required." } }, 403);
     await next();
   };
 
@@ -73,5 +106,5 @@ export function createAuth(store: Store, cfg: Config) {
     await next();
   };
 
-  return { login, logout, requireUser, requireSameOrigin };
+  return { login, logout, register, changePassword, requireUser, requireAdmin, requireSameOrigin };
 }
