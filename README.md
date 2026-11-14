@@ -1,6 +1,6 @@
 # Breakout
 
-**Trader-facing workspace | Planning and reference baseline**
+**Trader-facing workspace | Release 1 (read-only + alerts), in development**
 
 Breakout is the trader-facing workspace around the existing TradeOS decision authority, OpenAlgo market/broker data, Collector research context and AI assistance.
 
@@ -15,7 +15,7 @@ Breakout is the trader-facing workspace around the existing TradeOS decision aut
 
 ## Current branch
 
-This branch bootstraps the repository with selected, attributed reference implementations and technical assessments from three upstream repositories. It does not contain a production Breakout application implementation.
+`feature/breakout-foundation` contains the Release 1 application (public site, trader terminal, backend, integration adapters) plus the attributed reference material it started from. It has not been deployed.
 
 ## Trader application (Release 1)
 
@@ -31,7 +31,7 @@ BREAKOUT_E2E_CHROME=runtime/tooling/browsers/chromium_headless_shell-1194/chrome
 
 ## Trading Copilot (first module)
 
-`frontend/` (assistant-ui, React) and `backend/` (Hono, AI SDK v7, SQLite) form the Trading Copilot. It's a chat assistant powered by the Adorbis AI Gateway. All trading-system tools are disabled in this release. See [the architecture](docs/architecture/TRADING_COPILOT.md), [deployment and rollback](docs/deployment/COPILOT_DEPLOYMENT.md) and [dependencies](docs/THIRD_PARTY_DEPENDENCIES.md).
+`frontend/` (assistant-ui, React) and `backend/` (Hono, AI SDK v7, SQLite) form the Trading Copilot. It's a chat assistant powered by the Adorbis AI Gateway. All trading-system tools are disabled in this release. Each turn carries a server-assembled, read-only **TradeOS evidence** block (intelligence coverage, scanner and next-candle readings for the selected instrument, and a live quote only from the real market-data adapter), with freshness and state; the AI Chat view shows exactly what the model receives. Unavailable readings are passed as unavailable and must not be estimated. See [the architecture](docs/architecture/TRADING_COPILOT.md), [deployment and rollback](docs/deployment/COPILOT_DEPLOYMENT.md) and [dependencies](docs/THIRD_PARTY_DEPENDENCIES.md).
 
 ```bash
 PATH=/docker/breakout/runtime/tooling/node/bin:$PATH   # Node 22 for development; the host Node is unchanged

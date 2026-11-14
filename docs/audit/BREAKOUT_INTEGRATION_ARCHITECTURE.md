@@ -86,6 +86,17 @@ Proposed additions (each additive and small):
 - **Contract tests:** `backend/test/tradeos.test.ts` and `backend/test/bridge.test.ts` validate pinned payloads, unknown-enum fixtures and 503 envelopes. Planned: a CI job that diffs TradeOS's published OpenAPI document against the pinned snapshot and alerts on drift.
 - **Secrets:** `TRADEOS_SERVICE_TOKEN`, the Integration Adapter HMAC key and the Adorbis key are server-side only and never reach the browser. TradeOS operator credentials are never configured in Breakout.
 
+## 4a. Breakout API surfaces built on these rules
+
+| Route (signed-in) | What it returns |
+|---|---|
+| `GET /api/intel/capabilities` | One row per intelligence area (EV, contextual, regime, sentiment, psychological, next-candle, WF-08) with state `available / idle / stale / degraded / unavailable / not_exposed / not_implemented`, mode (v1, bridge or none), source and data time. A v1 capability advertised by TradeOS overrides the bridge reading. |
+| `GET /api/copilot/evidence?exchange=&symbol=` | The read-only evidence the Copilot receives for that instrument: the capability rows plus scanner rows, the next-candle read and, only from the real market-data adapter, a live quote. Built under a 4 s budget; a slow TradeOS yields `partial: true`, never a stalled chat. |
+| `GET /api/intel/universe` | TradeOS's scanned F&O universe with lot sizes and the date each was recorded. |
+| `GET /api/intel/{scanner,engines,wf08,sentiment,health,next-candle}` | The individual bridge feeds, each `ok`, `disabled` or `unavailable` with a reason. |
+
+Evidence text from TradeOS is treated as untrusted data: angle brackets are removed, whitespace is collapsed and each line is length-bounded before it enters the model prompt.
+
 ## 5. Degradation matrix (what the trader sees)
 
 | TradeOS state | Breakout behaviour |
