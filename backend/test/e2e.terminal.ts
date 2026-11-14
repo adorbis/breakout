@@ -170,7 +170,14 @@ try {
     await nav(page, "Dashboard").click();
     await page.locator(".panel", { hasText: "Scanner snapshot" }).getByText("IOC").waitFor();
     assert.ok(await page.locator(".panel", { hasText: "Market sentiment" }).getByText("CONFLICTED").isVisible());
-    assert.ok(await page.locator(".panel", { hasText: "Position monitoring" }).getByText("ERROR").isVisible());
+    assert.ok(await page.locator(".panel", { hasText: "Position monitoring" }).getByText("ERROR", { exact: true }).isVisible());
+    // Intelligence coverage: seven areas, EV never shown as a value.
+    const cov = page.locator(".panel", { hasText: "TradeOS intelligence coverage" });
+    await cov.locator(".cap").nth(6).waitFor();
+    assert.equal(await cov.locator(".cap").count(), 7);
+    assert.ok(await cov.locator(".cap", { hasText: "Mathematical (EV)" }).getByText("Not in TradeOS").isVisible());
+    assert.ok(await cov.locator(".cap", { hasText: "Regime" }).getByText("Stale", { exact: true }).isVisible());
+    assert.ok(await cov.locator(".cap", { hasText: "Psychological" }).getByText("Not exposed").isVisible());
     assert.ok(await page.locator(".panel", { hasText: "Integration status" }).locator(".chip-mode").first().isVisible());
     await shot(page, "03-dashboard");
   });
@@ -301,6 +308,14 @@ try {
     await box.press("Enter");
     await page.locator(".msg-assistant").last().waitFor({ timeout: 10_000 });
     await page.waitForTimeout(800);
+    // The evidence panel shows what the model was given, and the model actually received it.
+    const ev = page.locator(".evidence");
+    await ev.locator(".ev", { hasText: "Scanner (this instrument)" }).waitFor();
+    assert.ok(await ev.locator(".ev", { hasText: "Live quote" }).getByText("Unavailable").isVisible());
+    const system = String(gw.requests.at(-1)!.body.messages[0].content);
+    assert.match(system, /<tradeos_evidence retrieved_at=/);
+    assert.match(system, /Scanner \(this instrument\) \[/);
+    assert.match(system, /Mathematical \(EV\) \[not_implemented\]/);
     await shot(page, "11-ai-chat");
   });
   await step("profile: display name update shows in the top bar; password change validates", async () => {
@@ -316,10 +331,37 @@ try {
   });
   await step("settings: integration health lists every integration; EV not implemented", async () => {
     await nav(page, "Settings").click();
-    const panel = page.locator(".card", { hasText: "Integration health" });
+    const panel = page.locator(".panel", { hasText: "Integration health" });
     await panel.getByText("EV gate", { exact: true }).waitFor();
     assert.ok(await panel.getByText("TradeOS alerts (ntfy)").isVisible());
     assert.ok(await panel.getByText("Not implemented").first().isVisible());
+  });
+  await step("settings: notification switch and quiet hours persist across reload", async () => {
+    const sw = page.getByRole("switch", { name: "Watchlist alert notifications" });
+    assert.equal(await sw.getAttribute("aria-checked"), "true");
+    await sw.click();
+    await page.getByRole("switch", { name: "Enable quiet hours" }).click();
+    await page.getByLabel("Quiet hours start").fill("21:30");
+    await page.waitForTimeout(600);
+    await page.reload();
+    await page.getByRole("switch", { name: "Watchlist alert notifications" }).waitFor();
+    assert.equal(await page.getByRole("switch", { name: "Watchlist alert notifications" }).getAttribute("aria-checked"), "false");
+    assert.equal(await page.getByLabel("Quiet hours start").inputValue(), "21:30");
+    await page.getByRole("switch", { name: "Watchlist alert notifications" }).click();
+    await page.waitForTimeout(400);
+  });
+  await step("scanner: F&O universe tab lists TradeOS's instruments with lot sizes and row actions", async () => {
+    await nav(page, "Scanner").click();
+    await page.getByRole("tab", { name: "F&O universe" }).click();
+    const u = page.locator(".authority", { hasText: "Scanned F&O universe" });
+    await u.locator("tbody tr").first().waitFor();
+    await u.getByLabel("Filter universe symbol").fill("ABB");
+    await page.waitForTimeout(200);
+    assert.equal(await u.locator("tbody tr").count(), 1);
+    await u.getByRole("button", { name: "Actions for ABB" }).click();
+    await page.getByRole("menuitem", { name: "Next-candle analysis" }).click();
+    await heading(page, "Trade analysis").waitFor();
+    assert.match(page.url(), /symbol=ABB/);
   });
   await step("subscription: early access, no billing", async () => {
     await nav(page, "Subscription").click();

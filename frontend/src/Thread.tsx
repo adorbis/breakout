@@ -86,7 +86,7 @@ const Empty: FC<{ hasContext: boolean }> = ({ hasContext }) => (
     <h2>Trading Copilot</h2>
     <p>Ask about concepts, setups, risk and your trading process. Answers are general AI analysis.</p>
     <p className="muted">
-      Official TradeOS assessments, live market data and broker data are not connected in this release.
+      Each message carries the read-only TradeOS evidence shown in the evidence panel, with its freshness. Official TradeOS decisions and broker data are not connected.
       {hasContext ? "" : " Select an instrument above to give the Copilot context."}
     </p>
   </div>

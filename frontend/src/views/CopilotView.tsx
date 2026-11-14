@@ -7,6 +7,15 @@ import type { UIMessage } from "ai";
 import { api, ApiError, type AppConfig, type Conversation, type ModelInfo, type TradingContext } from "../api.ts";
 import { ChatPane } from "../ChatPane.tsx";
 import { Dropdown, Splitter } from "../ui.tsx";
+import { EvidencePanel } from "./EvidencePanel.tsx";
+
+const EV_KEY = "breakout.copilot.evidenceCollapsed";
+const readCollapsed = () => {
+  let stored: string | null = null;
+  try { stored = localStorage.getItem(EV_KEY); } catch { /* storage unavailable */ }
+  // Default: open where there is room beside the chat, collapsed on phones.
+  return stored === null ? window.matchMedia("(max-width: 760px)").matches : stored === "1";
+};
 
 const STATUS_LABEL: Record<ModelInfo["status"], string> = { verified: "verified", unverified: "not yet verified", unavailable: "unavailable" };
 
@@ -53,6 +62,9 @@ export const CopilotView: FC<{
   const [active, setActive] = useState<{ conversation: Conversation; messages: UIMessage[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  const [turns, setTurns] = useState(0);
+  const [evCollapsed, setEvCollapsed] = useState(readCollapsed);
+  const collapseEvidence = (c: boolean) => { setEvCollapsed(c); try { localStorage.setItem(EV_KEY, c ? "1" : "0"); } catch { /* storage unavailable */ } };
 
   const refresh = useCallback(async () => { const r = await api.conversations(); setList(r.conversations); return r.conversations; }, []);
   const open = useCallback(async (id: string) => {
@@ -114,7 +126,7 @@ export const CopilotView: FC<{
   const shown = list.filter((c) => !q || c.title.toLowerCase().includes(q.toLowerCase()) || c.context?.symbol.includes(q.toUpperCase()));
 
   return (
-    <div className="copilot" style={{ gridTemplateColumns: `${historyWidth}px 6px 1fr` }}>
+    <div className="copilot" style={{ gridTemplateColumns: `${historyWidth}px 6px minmax(0, 1fr) ${evCollapsed ? "36px" : "minmax(260px, 320px)"}` }}>
       <aside className="copilot-history">
         <button className="btn btn-primary btn-block" onClick={() => create(instrument ? { exchange: instrument.exchange, symbol: instrument.symbol } : null).catch((e) => setError(e.message))}>
           + New conversation{instrument ? ` (${instrument.symbol})` : ""}</button>
@@ -141,9 +153,10 @@ export const CopilotView: FC<{
         {error && <div className="banner" role="alert">{error} <button className="icon-btn" onClick={() => setError(null)} aria-label="Dismiss">✕</button></div>}
         {active ? (
           <ChatPane key={active.conversation.id} conversationId={active.conversation.id} initialMessages={active.messages}
-            model={model} context={ctx} disabled={Boolean(disabledReason)} disabledReason={disabledReason} onTurnEnd={() => { refresh().catch(() => {}); }} />
+            model={model} context={ctx} disabled={Boolean(disabledReason)} disabledReason={disabledReason} onTurnEnd={() => { refresh().catch(() => {}); setTurns((n) => n + 1); }} />
         ) : <div className="loading">Loading…</div>}
       </section>
+      <EvidencePanel context={ctx} refreshKey={turns} collapsed={evCollapsed} onCollapse={collapseEvidence} />
     </div>
   );
 };

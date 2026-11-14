@@ -20,6 +20,7 @@ import { createAlertsPoller, type AlertsPoller } from "./alerts.ts";
 import { createMarketData, type MarketData } from "./marketdata.ts";
 import { mountFeatures, PASSWORD_MIN } from "./features.ts";
 import { log } from "./log.ts";
+import { buildEvidence, renderEvidence, type Evidence } from "./copilot.ts";
 
 const MAX_USER_CHARS = 8000;
 const HISTORY_LIMIT = 40;
@@ -86,6 +87,14 @@ const PreferencesPatch = z.object({
     .refine((v) => v === undefined || Object.keys(v).length <= 10, "too many panels"),
   alert_min_priority: z.number().int().min(1).max(5).optional(),
   density: z.enum(["comfortable", "compact"]).optional(),
+  // Notifications: server-side fan-out switch, and browser (desktop) delivery with IST quiet hours.
+  notify_watchlist_alerts: z.boolean().optional(),
+  browser_notifications: z.boolean().optional(),
+  quiet_hours: z.object({
+    enabled: z.boolean(),
+    start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  }).strict().optional(),
   // User-drawn horizontal chart levels, per instrument ("NSE:SBIN" → prices).
   chart_levels: z.record(z.string().regex(/^[A-Z_]{2,12}:[A-Z0-9&_.\- ]{1,40}$/), z.array(z.number().positive().max(1e7)).max(10)).optional()
     .refine((v) => v === undefined || Object.keys(v).length <= 100, "too many instruments"),
@@ -98,11 +107,13 @@ const DEFAULT_PREFERENCES = {
   sidebar_collapsed: false, right_panel_open: true, chart_layout: "single",
   chart_indicators: ["volume", "levels"], panel_sizes: {}, alert_min_priority: 1, density: "comfortable",
   chart_levels: {}, chart_panes: [], last_instrument: null,
+  notify_watchlist_alerts: true, browser_notifications: false, quiet_hours: { enabled: false, start: "22:00", end: "07:00" },
 } as const;
 const MAX_WATCHLISTS = 20;
 const MAX_ITEMS_PER_LIST = 100;
 
-type Metadata = { model?: string; status?: MessageStatus; createdAt?: string; usage?: unknown; finishReason?: string; error?: string };
+type Metadata = { model?: string; status?: MessageStatus; createdAt?: string; usage?: unknown; finishReason?: string; error?: string;
+  evidence?: { retrieved_at: string; partial: boolean; available: number; total: number } };
 
 function toUIMessage(row: MessageRow): UIMessage<Metadata> {
   return {
@@ -353,6 +364,19 @@ export function createApp(deps: {
   });
 
   // --- chat -------------------------------------------------------------------
+  // The evidence the Copilot would receive for this instrument, for display.
+  api.get("/copilot/evidence", async (c) => {
+    const exchange = (c.req.query("exchange") ?? "").toUpperCase();
+    const symbol = c.req.query("symbol") ?? "";
+    let ctx: TradingContext | null = null;
+    if (exchange || symbol) {
+      const parsed = TradingContext.safeParse({ exchange, symbol });
+      if (!parsed.success) return c.json(err("bad_request", "A valid exchange and symbol are required."), 400);
+      ctx = parsed.data;
+    }
+    return c.json(await buildEvidence(ctx, { bridge, tradeos, marketdata, userId: c.get("user").id }));
+  });
+
   api.post("/chat", async (c) => {
     const user = c.get("user");
     const wait = chatLimiter.take(`chat:${user.id}`);
@@ -402,6 +426,12 @@ export function createApp(deps: {
       .slice(-HISTORY_LIMIT)
       .map(toUIMessage);
 
+    // Read-only TradeOS evidence for this turn, under a hard time budget: an
+    // unreachable TradeOS shortens the evidence, it never blocks the answer.
+    const evidence: Evidence = await buildEvidence(context, { bridge, tradeos, marketdata, userId: user.id });
+    const evidenceMeta = { retrieved_at: evidence.retrieved_at, partial: evidence.partial,
+      available: evidence.items.filter((i) => i.state === "available").length, total: evidence.items.length };
+
     const started = Date.now();
     const clientSignal = c.req.raw.signal;
     let streamError: GatewayError | null = null;
@@ -411,7 +441,7 @@ export function createApp(deps: {
     try {
       result = streamText({
         model: gateway.chatModel(body.model),
-        system: buildSystemPrompt(context),
+        system: buildSystemPrompt(context, renderEvidence(evidence)),
         messages: await convertToModelMessages(history),
         tools: enabledToolSet(),
         maxOutputTokens: cfg.ADORBIS_MAX_OUTPUT_TOKENS,
@@ -434,7 +464,7 @@ export function createApp(deps: {
       originalMessages: history,
       generateMessageId: () => randomUUID(),
       messageMetadata: ({ part }) => {
-        if (part.type === "start") return { model: body.model, createdAt: new Date().toISOString() };
+        if (part.type === "start") return { model: body.model, createdAt: new Date().toISOString(), evidence: evidenceMeta };
         if (part.type === "finish") return { model: body.model, status: "complete", usage: part.totalUsage, finishReason: part.finishReason };
         return undefined;
       },

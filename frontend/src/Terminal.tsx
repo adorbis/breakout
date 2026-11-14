@@ -17,6 +17,7 @@ import { AnalysisView, DashboardView, MarketView, PositionsPage, ScannerView, ty
 import { AccountView, AdminView, AlertsView, NotificationsView, ProfileView } from "./views/Account.tsx";
 import { WatchlistsView } from "./WatchlistsView.tsx";
 import { SettingsView } from "./SettingsView.tsx";
+import { useBrowserNotifications } from "./notify.ts";
 
 // Heavy views (charting library, AI chat runtime) are split into their own chunks.
 const ChartView = lazy(() => import("./views/ChartView.tsx").then((m) => ({ default: m.ChartView })));
@@ -185,6 +186,10 @@ const Shell: FC<{ user: User; onLogout: () => void }> = ({ user, onLogout }) => 
   const clock = useLoad<SessionClock>(api.sessionClock, 30);
   const integ = useLoad<IntegrationsReport>(api.integrations, 60);
   const badges = useLoad(api.badges, 30);
+  useBrowserNotifications(badges.data?.notifications_unread, {
+    enabled: Boolean(prefs?.browser_notifications), quiet: prefs?.quiet_hours ?? { enabled: false, start: "22:00", end: "07:00" },
+    onOpen: () => navigate(viewHref("notifications", null)),
+  });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const pending = useRef<Partial<Preferences>>({});
   const isAdmin = user.role === "admin";
@@ -260,7 +265,7 @@ const Shell: FC<{ user: User; onLogout: () => void }> = ({ user, onLogout }) => 
   let body: ReactNode;
   switch (view) {
     case "dashboard": body = <DashboardView nav={nav} clock={clock.data} refreshSeconds={refresh} displayName={displayName} />; break;
-    case "market": body = <MarketView refreshSeconds={refresh} clock={clock.data} />; break;
+    case "market": body = <MarketView refreshSeconds={refresh} clock={clock.data} onOpen={(v) => go(v)} />; break;
     case "scanner": body = <ScannerView nav={nav} refreshSeconds={refresh} />; break;
     case "analysis": body = <AnalysisView instrument={instrument} onPick={() => openPalette((i) => go("analysis", i))} nav={nav} />; break;
     case "positions": body = <PositionsPage refreshSeconds={refresh} />; break;

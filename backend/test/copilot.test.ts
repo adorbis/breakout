@@ -262,6 +262,11 @@ test("13 decision boundary: prompt states TradeOS is unavailable and forbids fab
   assert.match(system, /cannot obtain the authoritative TradeOS decision/);
   assert.match(system, /Never label your own view "TradeOS"/);
   assert.match(system, /exchange: NSE\nsymbol: RELIANCE/);
+  // TradeOS is not connected in this test server: the evidence says so, it invents nothing.
+  assert.match(system, /<tradeos_evidence retrieved_at="[^"]+">/);
+  assert.match(system, /Mathematical \(EV\) \[not_implemented\]/);
+  assert.match(system, /Live quote \[unavailable\][^\n]*not connected/);
+  assert.match(system, /has NO value: say it is unavailable/);
 });
 
 test("13b trading context is validated; there is no default instrument", async () => {

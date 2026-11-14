@@ -166,6 +166,34 @@ test("F4 alerts: ntfy poll stores once, 403 is reported (not 'no alerts'), acks 
   assert.deepEqual(symbolTokens("WATCH sbin-ce m&m"), ["WATCH", "SBIN-CE", "M&M"]);
 });
 
+test("F4b notification settings: the watchlist switch and minimum priority gate the fan-out; preferences validate", async () => {
+  const u = store.findUserByName("trader1")!.id;
+  const wl = store.createWatchlist(randomUUID(), u, "Notify settings test");
+  store.addWatchlistItem(wl.id, u, { exchange: "NSE", symbol: "TCS", instrument_key: null, note: null });
+  const cfg = loadConfig({ BREAKOUT_PUBLIC_ORIGIN: ORIGIN, BREAKOUT_DB_PATH: ":memory:", NTFY_BASE_URL: "http://127.0.0.1:9001" });
+  const feed = (id: string, priority: number) => (async () => new Response(JSON.stringify({ id, time: 1763200000, event: "message", title: `WATCH TCS ${id}`, message: "x", priority }), { status: 200 })) as typeof fetch;
+  const count = () => store.listNotifications(u, 500).filter((n) => /TCS/.test(n.title)).length;
+  const before = count();
+
+  store.updatePreferences(u, { ...(store.getPreferences(u) ?? {}), notify_watchlist_alerts: false });
+  await createAlertsPoller(cfg, store, feed("n1", 5)).pollOnce();
+  assert.equal(count(), before, "switched off → no notification");
+
+  store.updatePreferences(u, { ...(store.getPreferences(u) ?? {}), notify_watchlist_alerts: true, alert_min_priority: 4 });
+  await createAlertsPoller(cfg, store, feed("n2", 3)).pollOnce();
+  assert.equal(count(), before, "below the user's minimum priority → no notification");
+  await createAlertsPoller(cfg, store, feed("n3", 4)).pollOnce();
+  assert.equal(count(), before + 1, "at the minimum priority → notified");
+  store.updatePreferences(u, { ...(store.getPreferences(u) ?? {}), alert_min_priority: 1 });
+
+  const { app } = makeApp();
+  const c = await login(app, "trader1", "trader1-password-123");
+  const ok = await call(app, "/preferences", { method: "PUT", cookie: c, body: { browser_notifications: true, quiet_hours: { enabled: true, start: "22:30", end: "06:45" } } });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.body.preferences.quiet_hours, { enabled: true, start: "22:30", end: "06:45" });
+  assert.equal((await call(app, "/preferences", { method: "PUT", cookie: c, body: { quiet_hours: { enabled: true, start: "25:00", end: "06:00" } } })).status, 400);
+});
+
 test("F5 alerts not configured → explicit not_configured; a public ntfy URL is refused", () => {
   const cfg = loadConfig({ BREAKOUT_PUBLIC_ORIGIN: ORIGIN, BREAKOUT_DB_PATH: ":memory:" });
   assert.equal(createAlertsPoller(cfg, store).status().state, "not_configured");

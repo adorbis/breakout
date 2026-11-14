@@ -17,6 +17,7 @@ import type { TradeOS } from "./tradeos.ts";
 import type { Gateway } from "./gateway.ts";
 import { searchCatalog, findInstrument, demoCandles, SAMPLE_CATALOG, type Instrument } from "./instruments.ts";
 import { EXCHANGES } from "./policy.ts";
+import { readCapabilities } from "./capabilities.ts";
 
 const err = (code: string, message: string) => ({ error: { code, message } });
 
@@ -79,6 +80,8 @@ export function mountFeatures(api: Hono<AppEnv>, deps: {
   api.get("/intel/wf08", async (c) => c.json(await bridge.wf08()));
   api.get("/intel/sentiment", async (c) => c.json(await bridge.sentiment()));
   api.get("/intel/health", async (c) => c.json(await bridge.health()));
+  api.get("/intel/capabilities", async (c) => c.json(await readCapabilities(bridge, tradeos)));
+  api.get("/intel/universe", async (c) => c.json(await bridge.universe()));
   api.get("/intel/next-candle", async (c) => {
     const key = c.req.query("key") ?? "";
     if (!INSTRUMENT_KEY.test(key)) return c.json(err("bad_request", "A TradeOS instrument key (e.g. NSE_EQ|INE062A01020) is required."), 400);

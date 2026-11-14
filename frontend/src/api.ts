@@ -119,6 +119,9 @@ export interface Preferences {
   chart_levels: Record<string, number[]>;
   chart_panes: { exchange: string; symbol: string; interval: CandleInterval }[];
   last_instrument: { exchange: string; symbol: string } | null;
+  notify_watchlist_alerts: boolean;
+  browser_notifications: boolean;
+  quiet_hours: { enabled: boolean; start: string; end: string };
 }
 
 // --- accounts ---------------------------------------------------------------------
@@ -155,7 +158,7 @@ export interface BridgeEngines {
   warnings: string[]; issues: string[];
 }
 export interface BridgeWf08 {
-  status: Label; service: Label; coverage: Label; has_open_position: boolean | null; note: string | null;
+  status: Label; service: Label; coverage: Label; cycle_status: string | null; has_open_position: boolean | null; note: string | null;
   last_attempt_at: string | null; last_success_at: string | null; accounts_queried: number | null;
   positions_discovered: number | null; positions_evaluated: number | null; triggered: number | null;
   books_failed: { broker_id: string | null; account_id: string | null; book: string | null; reason: string | null }[];
@@ -224,6 +227,25 @@ export interface WatchlistRecord {
   id: string; name: string; sort_order: number; created_at: string; updated_at: string; items: WatchlistItem[];
 }
 
+export type CapabilityState = "available" | "idle" | "stale" | "degraded" | "unavailable" | "not_exposed" | "not_implemented";
+export type CapabilityId = "ev" | "contextual" | "regime" | "sentiment" | "psychological" | "next_candle" | "wf08";
+export interface BridgeUniverse {
+  count: number; last_refreshed: string | null;
+  instruments: { symbol: string; instrument_key: string; lot_size: number | null; lot_size_as_of: string | null; active: boolean | null }[];
+}
+export interface Capability {
+  id: CapabilityId; title: string; question: string; state: CapabilityState; mode: "v1" | "bridge" | "none";
+  source: string | null; as_of: string | null; age_seconds: number | null; summary: string; detail: string[];
+}
+export interface CapabilityReport { checked_at: string; tradeos_connected: boolean; items: Capability[] }
+
+export type EvidenceState = CapabilityState | "not_applicable";
+export interface EvidenceItem { id: string; label: string; state: EvidenceState; text: string; source: string | null; as_of: string | null }
+export interface Evidence {
+  retrieved_at: string; partial: boolean; items: EvidenceItem[];
+  instrument: { exchange: string; symbol: string; instrument_key: string | null } | null;
+}
+
 export const api = {
   me: () => request<{ user: User; profile: Profile | null }>("/me"),
   login: (username: string, password: string) =>
@@ -245,6 +267,10 @@ export const api = {
   bridgeWf08: () => request<BridgeFeed<BridgeWf08>>("/intel/wf08"),
   bridgeSentiment: () => request<BridgeFeed<BridgeSentiment>>("/intel/sentiment"),
   bridgeHealth: () => request<BridgeHealth>("/intel/health"),
+  capabilities: () => request<CapabilityReport>("/intel/capabilities"),
+  bridgeUniverse: () => request<BridgeFeed<BridgeUniverse>>("/intel/universe"),
+  copilotEvidence: (ctx: { exchange: string; symbol: string } | null) =>
+    request<Evidence>(`/copilot/evidence${ctx ? `?exchange=${encodeURIComponent(ctx.exchange)}&symbol=${encodeURIComponent(ctx.symbol)}` : ""}`),
   nextCandle: (key: string) => request<BridgeFeed<BridgeNextCandle>>(`/intel/next-candle?key=${encodeURIComponent(key)}`),
   instrumentDetail: (exchange: string, symbol: string) =>
     request<InstrumentDetail>(`/instruments/detail?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(symbol)}`),

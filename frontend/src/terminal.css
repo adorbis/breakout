@@ -175,6 +175,7 @@ th.sortable button { all: unset; cursor: pointer; } th.sortable button:focus-vis
 .ttop-right { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
 .dropdown > button { white-space: nowrap; }
 @media (max-width: 1500px) { .term:has(.rpanel) .ttop-right .chip-session { display: none; } }
+@media (max-width: 760px) { .ttop-right .chip-session { display: none; } }
 .tbell { position: relative; font-size: 16px; } .tbell .badge { position: absolute; top: -4px; right: -6px; transform: scale(.85); }
 .tbody { flex: 1; overflow: auto; min-height: 0; }
 .tfoot { display: flex; gap: 16px; padding: 4px 12px; border-top: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
@@ -274,3 +275,71 @@ th.sortable button { all: unset; cursor: pointer; } th.sortable button:focus-vis
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } .hero h1 { font-size: 30px; } .site-foot { grid-template-columns: 1fr; }
 }
 .bridge-legend { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+
+/* --- TradeOS intelligence coverage (views/Capabilities.tsx) --------------------------- */
+.cap-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
+.cap { border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 6px; padding: 10px 12px; background: var(--panel); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cap-available { border-left-color: var(--up); }
+.cap-stale, .cap-degraded { border-left-color: var(--warn-fg); }
+.cap-unavailable { border-left-color: var(--err-fg); }
+.cap-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.cap-title { display: flex; flex-direction: column; min-width: 0; }
+.cap-title b { font-size: 14px; }
+.cap-summary { margin: 0; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.cap-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cap-meta .prov { margin: 0; overflow-wrap: anywhere; }
+.cap-detail summary { cursor: pointer; font-size: 12px; color: var(--link); }
+.cap-detail ul { margin: 4px 0 0; padding-left: 18px; font-size: 12px; color: var(--muted); }
+.cap-compact { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.cap-compact .cap-summary { font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.btn-ghost { border-color: transparent; background: transparent; color: var(--link); }
+.btn-ghost:hover:not(:disabled) { background: var(--panel-2); }
+.err-text { color: var(--err-fg); }
+
+/* --- Copilot evidence panel (views/EvidencePanel.tsx) -------------------------------- */
+.evidence { border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.evidence-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.evidence-collapsed .evidence-head { border-bottom: 0; justify-content: center; padding: 8px 2px; }
+.evidence-title { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.evidence-body { overflow: auto; padding: 10px; flex: 1; min-height: 0; }
+.evidence-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ev { border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+.ev-available { border-left-color: var(--up); } .ev-stale, .ev-degraded { border-left-color: var(--warn-fg); } .ev-unavailable { border-left-color: var(--err-fg); }
+.ev-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.ev-label { font-weight: 600; font-size: 13px; }
+.ev-text { margin: 4px 0; font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.ev .prov { margin: 0; }
+@media (max-width: 1100px) {
+  .copilot { grid-template-columns: 240px 6px minmax(0, 1fr) !important; grid-template-rows: auto minmax(0, 1fr); }
+  .copilot .evidence { grid-column: 1 / -1; grid-row: 1; border-left: 0; border-bottom: 1px solid var(--line); max-height: 38vh; }
+  .copilot-history, .copilot > .splitter, .copilot-main { grid-row: 2; }
+  .evidence-collapsed .evidence-head { justify-content: flex-start; }
+}
+@media (max-width: 760px) {
+  .copilot { grid-template-columns: 1fr !important; }
+  .copilot-main { grid-column: 1; }
+}
+
+/* --- Settings (SettingsView.tsx) -------------------------------------------------------- */
+.settings .set-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.settings .set-row:last-child { border-bottom: 0; }
+.set-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.set-label label { font-weight: 600; font-size: 13px; }
+.set-control { display: flex; justify-content: flex-end; min-width: 0; }
+.set-control select { min-width: 180px; }
+.set-control .slider { min-width: 220px; }
+.switch { position: relative; width: 38px; height: 22px; border-radius: 11px; border: 1px solid var(--line); background: var(--panel-2); cursor: pointer; padding: 0; flex: none; }
+.switch-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: transform .15s ease, background .15s ease; }
+.switch-on { background: var(--accent); border-color: var(--accent); }
+.switch-on .switch-knob { transform: translateX(16px); background: var(--accent-fg); }
+.switch:disabled { opacity: .5; cursor: not-allowed; }
+.switch:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.quiet { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.quiet input[type="time"] { width: 132px; }
+@media (prefers-reduced-motion: reduce) { .switch-knob { transition: none; } }
+@media (max-width: 560px) {
+  .settings .set-row { grid-template-columns: 1fr; }
+  .set-control { justify-content: flex-start; }
+  .set-control select, .set-control .slider { min-width: 0; width: 100%; }
+}
+.table-scroll { max-height: 62vh; overflow: auto; } .table-scroll thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }

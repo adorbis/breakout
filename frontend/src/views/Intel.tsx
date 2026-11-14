@@ -5,7 +5,7 @@
 import { useMemo, useState, type FC } from "react";
 import {
   api, type BridgeEngines, type BridgeNextCandle, type InstrumentDetail, type IntegrationsReport,
-  type SessionClock, type WatchlistRecord, type AlertItem, type QuoteResult,
+  type SessionClock, type WatchlistRecord, type AlertItem, type QuoteResult, type ViewId,
 } from "../api.ts";
 import { PositionsView as V1PositionsView, W7ScoresView } from "../Intelligence.tsx";
 import {
@@ -13,6 +13,7 @@ import {
   ago, fmtDur, fmtInt, fmtNum, fmtWhen, useContextMenu, useLoad, useSort, type MenuItem,
 } from "../ui.tsx";
 import { loadScanner, type ScanResult, type ScanRow } from "./feeds.ts";
+import { CapabilityPanel } from "./Capabilities.tsx";
 
 export interface Nav {
   chart: (i: { exchange: string; symbol: string }) => void;
@@ -21,6 +22,59 @@ export interface Nav {
   addToWatchlist: (i: { exchange: string; symbol: string; instrument_key?: string | null }) => void;
   go: (view: string) => void;
 }
+
+// --- F&O universe (TradeOS scanned instruments; lot sizes as TradeOS recorded them) ------
+const UniverseTab: FC<{ nav: Nav }> = ({ nav }) => {
+  const u = useLoad(api.bridgeUniverse, 0);
+  const [q, setQ] = useState("");
+  const [onlyActive, setOnlyActive] = useState(true);
+  const { th, apply } = useSort<"symbol" | "lot_size" | "lot_size_as_of">("symbol", 1);
+  const openMenu = useContextMenu();
+  const rows = useMemo(() => {
+    if (!u.data || u.data.state !== "ok") return [];
+    let r = u.data.data.instruments;
+    if (onlyActive) r = r.filter((i) => i.active !== false);
+    if (q) r = r.filter((i) => i.symbol.includes(q.toUpperCase()));
+    return apply(r, (x, k) => x[k]);
+  }, [u.data, q, onlyActive, apply]);
+  const inst = (i: { symbol: string; instrument_key: string }) => ({ exchange: "NSE", symbol: i.symbol, instrument_key: i.instrument_key });
+  const menu = (e: React.MouseEvent, i: { symbol: string; instrument_key: string }) => openMenu(e, [
+    { label: "Open chart", onSelect: () => nav.chart(inst(i)) },
+    { label: "Next-candle analysis", onSelect: () => nav.analysis(inst(i)) },
+    { label: "Add to watchlist…", onSelect: () => nav.addToWatchlist(inst(i)) },
+    { label: "Ask AI about this", onSelect: () => nav.ask(inst(i)) },
+  ]);
+  return (
+    <BridgeState feed={u.data} what="F&O universe">
+      {(d, f) => (
+        <Authority title="Scanned F&O universe" meta={<Provenance parts={["TradeOS", "/scanner/universe", `${d.count} instruments`, d.last_refreshed ? `refreshed ${fmtWhen(d.last_refreshed)}` : "refresh time not provided", `read ${ago(f.fetched_at)}`]} />}>
+          <div className="filters">
+            <input type="search" placeholder="Filter symbol…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Filter universe symbol" />
+            <label className="check"><input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)} /> Active only</label>
+            <span className="muted small">{rows.length} shown</span>
+          </div>
+          {rows.length === 0 ? <Empty title="No instruments match" /> : (
+            <div className="table-wrap table-scroll">
+              <table className="data">
+                <thead><tr>{th("symbol", "Instrument")}{th("lot_size", "Lot size", "num")}{th("lot_size_as_of", "Lot size recorded")}<th>Instrument key</th><th aria-label="Actions" /></tr></thead>
+                <tbody>{rows.map((i) => (
+                  <tr key={i.instrument_key} onContextMenu={(e) => menu(e, i)} onDoubleClick={() => nav.chart(inst(i))}>
+                    <td><b>{i.symbol}</b>{i.active === false && <span className="muted small"> · inactive</span>}</td>
+                    <td className="num">{fmtInt(i.lot_size)}</td>
+                    <td className="muted">{i.lot_size_as_of ? fmtWhen(i.lot_size_as_of) : "—"}</td>
+                    <td><code className="small">{i.instrument_key}</code></td>
+                    <td><button className="icon-btn" aria-label={`Actions for ${i.symbol}`} onClick={(e) => menu(e, i)}>⋯</button></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
+          <p className="muted small">The instruments TradeOS scans, with lot sizes as TradeOS recorded them (check the date before relying on a lot size). Being in the universe is not a signal.</p>
+        </Authority>
+      )}
+    </BridgeState>
+  );
+};
 
 // --- scanner ---------------------------------------------------------------------------
 function ScanProvenance({ r }: { r: ScanResult }) {
@@ -36,7 +90,7 @@ const KNOWN_VERDICTS = ["FIRE", "WAIT", "WATCH", "SKIP", "AVOID", "CASH_ONLY", "
 
 export const ScannerView: FC<{ nav: Nav; refreshSeconds: number }> = ({ nav, refreshSeconds }) => {
   const { data, error, busy, refresh } = useLoad(loadScanner, refreshSeconds || 0);
-  const [tab, setTab] = useState<"all" | "CE" | "PE" | "w7">("all");
+  const [tab, setTab] = useState<"all" | "CE" | "PE" | "w7" | "universe">("all");
   const [q, setQ] = useState("");
   const [minScore, setMinScore] = useState(0);
   const [verdicts, setVerdicts] = useState<string[]>([]);
@@ -70,8 +124,8 @@ export const ScannerView: FC<{ nav: Nav; refreshSeconds: number }> = ({ nav, ref
       <Panel title="Scanner" sub="TradeOS scanner candidates, as TradeOS returned them. Watchlist scores are a separate tab."
         actions={<button className="btn btn-sm" onClick={refresh} disabled={busy}>{busy ? "Refreshing…" : "Refresh"}</button>}>
         <Tabs label="Scanner tabs" value={tab} onChange={setTab} tabs={[
-          { id: "all", label: "All" }, { id: "CE", label: "Longs (CE)" }, { id: "PE", label: "Shorts (PE)" }, { id: "w7", label: "TradeOS W7 scores" }]} />
-        {tab === "w7" ? <W7ScoresView compact /> : (
+          { id: "all", label: "All" }, { id: "CE", label: "Longs (CE)" }, { id: "PE", label: "Shorts (PE)" }, { id: "w7", label: "TradeOS W7 scores" }, { id: "universe", label: "F&O universe" }]} />
+        {tab === "w7" ? <W7ScoresView compact /> : tab === "universe" ? <UniverseTab nav={nav} /> : (
           <>
             <div className="filters">
               <input type="search" placeholder="Filter symbol…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Filter symbol" />
@@ -140,7 +194,7 @@ export const EnginesTable: FC<{ d: BridgeEngines }> = ({ d }) => (
   </div>
 );
 
-export const MarketView: FC<{ refreshSeconds: number; clock: SessionClock | null }> = ({ refreshSeconds, clock }) => {
+export const MarketView: FC<{ refreshSeconds: number; clock: SessionClock | null; onOpen?: (v: ViewId) => void }> = ({ refreshSeconds, clock, onOpen }) => {
   const sentiment = useLoad(api.bridgeSentiment, refreshSeconds || 0);
   const engines = useLoad(api.bridgeEngines, refreshSeconds || 0);
   const health = useLoad(api.bridgeHealth, refreshSeconds || 0);
@@ -198,6 +252,7 @@ export const MarketView: FC<{ refreshSeconds: number; clock: SessionClock | null
           </BridgeState>
         )}
       </Panel>
+      <CapabilityPanel className="span-2" onOpen={onOpen} refreshSeconds={refreshSeconds || 60} />
     </div>
   );
 };
@@ -219,6 +274,7 @@ export const PositionsPage: FC<{ refreshSeconds: number }> = ({ refreshSeconds }
                 <div className="kv">
                   <div><span className="k">Service</span><LabelBadge l={d.service} kind="service" /></div>
                   <div><span className="k">Coverage</span><LabelBadge l={d.coverage} kind="coverage" /></div>
+                  <div><span className="k">Last cycle</span>{d.cycle_status ? <code>{d.cycle_status}</code> : <span className="muted">not reported</span>}</div>
                   <div><span className="k">Open positions</span>{d.has_open_position === null ? <span className="muted">Unknown</span> : d.has_open_position ? "Yes" : "None"}</div>
                   <div><span className="k">Discovered / evaluated</span>{fmtInt(d.positions_discovered)} / {fmtInt(d.positions_evaluated)}</div>
                   <div><span className="k">Triggered last cycle</span>{fmtInt(d.triggered)}</div>
@@ -336,6 +392,7 @@ export const DashboardView: FC<{ nav: Nav; clock: SessionClock | null; refreshSe
             <button className="btn btn-sm" onClick={() => nav.go("settings")}>Details</button></div>}
         </div>
       </Panel>
+      <CapabilityPanel className="span-2" compact onOpen={(v) => nav.go(v)} refreshSeconds={refreshSeconds || 60} />
       <Panel title="Scanner snapshot" actions={<button className="btn btn-sm" onClick={() => nav.go("scanner")}>Open scanner</button>}>
         {!scan.data ? <div className="loading-inline">Loading…</div> : scan.data.kind === "none" ? <Empty title="Scanner not connected">{scan.data.reasons[1]}</Empty>
           : scan.data.window === "no_live_scan" ? <Empty title="No live scan in the 30-minute window">{scan.data.kind === "bridge" && scan.data.last_scan_ist ? `Last scan ${scan.data.last_scan_ist} IST (date not provided).` : ""} Not a "no signals" decision.</Empty>
@@ -350,6 +407,7 @@ export const DashboardView: FC<{ nav: Nav; clock: SessionClock | null; refreshSe
       <Panel title="Position monitoring" actions={<button className="btn btn-sm" onClick={() => nav.go("positions")}>Positions</button>}>
         <BridgeState feed={wf.data} what="WF-08">
           {(d) => <div className="kv"><div><span className="k">Service</span><LabelBadge l={d.service} /></div><div><span className="k">Coverage</span><LabelBadge l={d.coverage} /></div>
+            {d.cycle_status && <div><span className="k">Last cycle</span><code>{d.cycle_status}</code></div>}
             {d.books_failed.length > 0 && <div><span className="k">Unreadable books</span>{d.books_failed.length}</div>}</div>}
         </BridgeState>
       </Panel>

@@ -27,8 +27,9 @@ const Watchdog = z.object({
   has_open_position: z.union([z.boolean(), z.null()]).optional(),
   service: str(20).optional(),
   coverage: str(20).optional(),
-  coverage_summary: z.record(z.string(), z.unknown()).optional(),
+  coverage_summary: z.record(z.string(), z.unknown()).nullish(),
   last_cycle: z.object({
+    status: str(60).optional(),
     last_attempt_at: str(60).optional(),
     last_success_at: str(60).optional(),
     duration_ms: num.optional(),
@@ -41,7 +42,7 @@ const Watchdog = z.object({
     coverage_detail: z.object({
       books_failed: z.array(Failure).max(50).optional(),
       not_evaluated: z.array(z.record(z.string(), z.unknown())).max(200).optional(),
-    }).passthrough().optional(),
+    }).passthrough().nullish(),  // null outside market hours
   }).passthrough().nullable().optional(),
 }).passthrough();
 
@@ -49,6 +50,8 @@ export interface Wf08Data {
   status: Label;
   service: Label;
   coverage: Label;
+  /** TradeOS's own cycle status, verbatim (e.g. "outside_market_hours"). */
+  cycle_status: string | null;
   has_open_position: boolean | null;
   note: string | null;
   last_attempt_at: string | null;
@@ -89,6 +92,7 @@ export async function readWf08(client: BridgeClient): Promise<BridgeFeed<Wf08Dat
       status: lab(w.status, ["ok", "healthy", "error", "degraded", "idle", "stale"]),
       service: lab(w.service, SERVICE),
       coverage: lab(w.coverage, COVERAGE),
+      cycle_status: lc?.status ?? null,
       has_open_position: w.has_open_position ?? null,
       note: w.note ?? null,
       last_attempt_at: lc?.last_attempt_at ?? null,

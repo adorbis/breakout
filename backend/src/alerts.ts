@@ -106,6 +106,11 @@ export function createAlertsPoller(cfg: Config, store: Store, fetchImpl: typeof 
       if (!isNew) continue;
       fresh++;
       for (const w of store.usersWatching(symbolTokens(`${m.title ?? ""} ${m.message ?? ""}`))) {
+        // Per-user notification settings: the switch and the minimum priority.
+        const prefs = store.getPreferences(w.user_id) ?? {};
+        if (prefs.notify_watchlist_alerts === false) continue;
+        const minPriority = typeof prefs.alert_min_priority === "number" ? prefs.alert_min_priority : 1;
+        if ((m.priority ?? 3) < minPriority) continue;
         store.addNotification({ user_id: w.user_id, kind: "alert_watchlist", title: `TradeOS alert mentions ${w.symbol}`,
           body: (m.title ?? m.message ?? "").slice(0, 200), ref: m.id });
       }

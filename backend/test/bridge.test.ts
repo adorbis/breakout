@@ -133,6 +133,19 @@ test("B9 WF-08 missing service/coverage → UNKNOWN (restart semantics), never H
   if (r.state === "ok") { assert.equal(r.data.service.value, "UNKNOWN"); assert.equal(r.data.coverage.value, "UNKNOWN"); }
 });
 
+test("B9b WF-08 outside market hours (live fixture): null service/coverage/coverage_detail parse as UNKNOWN with the cycle status", async () => {
+  const body = fx("system_intelligence-health.outside-hours");
+  const s = stub(() => jsonRes(body));
+  const r = await createBridge(cfgOn, createBridgeClient(cfgOn, Date.now, s.f)).wf08();
+  assert.equal(r.state, "ok", "a null coverage_detail is TradeOS's normal out-of-hours shape, not drift");
+  if (r.state !== "ok") return;
+  assert.equal(r.data.service.value, "UNKNOWN");
+  assert.equal(r.data.coverage.value, "UNKNOWN");
+  assert.equal(r.data.cycle_status, "outside_market_hours");
+  assert.equal(r.data.last_success_at, null);
+  assert.deepEqual(r.data.books_failed, []);
+});
+
 test("B10 sentiment (live fixture): null component scores stay null with TradeOS's note; no freshness claim", async () => {
   const r = await createBridge(cfgOn, createBridgeClient(cfgOn, Date.now, fixtureServer.f)).sentiment();
   assert.equal(r.state, "ok");
