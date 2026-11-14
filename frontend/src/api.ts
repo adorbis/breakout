@@ -100,6 +100,24 @@ export type CandlesResponse =
   | { source: "demo"; interval: string; candles: Candle[]; note: string; data_state?: DataState }
   | { source: "openalgo"; interval: string; candles: Candle[]; as_of: string; data_state?: DataState }
   | { source: "unavailable"; reason: string; data_state?: DataState };
+export interface StructureLevels { resistance: number[]; support: number[]; rangeHigh: number | null; rangeLow: number | null; lookback: number }
+export interface MarketStructure {
+  bars: number; last_close: number | null; last_bar_time: number | null; bar_change_pct: number | null; levels: StructureLevels;
+  swing_sequence: "higher_highs_higher_lows" | "lower_highs_lower_lows" | "mixed" | "insufficient";
+  range_position: "above_range" | "below_range" | "inside_range" | "unknown";
+  pct_to_range_high: number | null; pct_to_range_low: number | null; volume_ratio: number | null; notes: string[];
+}
+export interface InstrumentAnalysis {
+  exchange: string; symbol: string; interval: CandleInterval; source: "openalgo" | "demo" | "unavailable"; reason?: string;
+  data_state: DataState; factual: boolean; structure: MarketStructure | null; summary: string | null; method?: string;
+}
+export interface SavedAnalysis {
+  id: string; exchange: string; symbol: string; interval: CandleInterval; note: string | null; created_at: string;
+  snapshot: {
+    evidence: { retrieved_at: string; partial: boolean; items: EvidenceItem[] };
+    structure: { source: "openalgo" | "demo" | "unavailable"; factual: boolean; data_state: DataState; summary: string | null };
+  };
+}
 export interface ContractCheck {
   exchange: string; symbol: string; state: "ok" | "unavailable" | "not_configured"; reason: string | null;
   tradeos: { lot_size: number | null; lot_size_as_of: string | null; instrument_key: string } | null;
@@ -331,6 +349,13 @@ export const api = {
   removeWatchlistItem: (listId: string, itemId: string) =>
     request<{ ok: true }>(`/watchlists/${listId}/items/${itemId}`, { method: "DELETE" }),
   searchInstruments: (q: string) => request<CatalogResponse>(`/instruments/search?q=${encodeURIComponent(q)}`),
+  analysis: (exchange: string, symbol: string, interval: CandleInterval) =>
+    request<InstrumentAnalysis>(`/instruments/analysis?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(symbol)}&interval=${interval}`),
+  savedAnalyses: (q?: { exchange: string; symbol: string }) =>
+    request<{ analyses: SavedAnalysis[] }>(`/analyses${q ? `?exchange=${encodeURIComponent(q.exchange)}&symbol=${encodeURIComponent(q.symbol)}` : ""}`),
+  saveAnalysis: (b: { exchange: string; symbol: string; interval: CandleInterval; note: string | null }) =>
+    request<{ analysis: SavedAnalysis }>("/analyses", { method: "POST", body: JSON.stringify(b) }),
+  deleteAnalysis: (id: string) => request<{ ok: true }>(`/analyses/${encodeURIComponent(id)}`, { method: "DELETE" }),
   contract: (exchange: string, symbol: string) =>
     requestAny<ContractCheck>(`/instruments/contract?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(symbol)}`),
   candles: (exchange: string, symbol: string, interval: CandleInterval) =>

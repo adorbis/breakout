@@ -18,7 +18,10 @@ import type { Gateway } from "./gateway.ts";
 import { searchCatalog, findInstrument, demoCandles, SAMPLE_CATALOG, type Instrument } from "./instruments.ts";
 import { EXCHANGES } from "./policy.ts";
 import { readCapabilities } from "./capabilities.ts";
-import { candleState, demoState, quoteState, unavailableState } from "./freshness.ts";
+import { candleState, demoState, quoteState, unavailableState, type DataState } from "./freshness.ts";
+import { describeStructure, marketStructure } from "./structure.ts";
+import { buildEvidence } from "./copilot.ts";
+import { TradingContext } from "./policy.ts";
 
 const err = (code: string, message: string) => ({ error: { code, message } });
 /** A query timestamp normalised to the stored ISO-UTC form, or undefined if absent/invalid. */
@@ -140,32 +143,68 @@ export function mountFeatures(api: Hono<AppEnv>, deps: {
     });
   });
 
-  api.get("/instruments/candles", async (c) => {
-    const exchange = (c.req.query("exchange") ?? "NSE").toUpperCase();
-    const symbol = (c.req.query("symbol") ?? "").toUpperCase();
-    const interval = (c.req.query("interval") ?? "30minute") as MdInterval;
-    if (!symbol) return c.json(err("bad_request", "symbol is required."), 400);
-    if (!(MD_INTERVALS as readonly string[]).includes(interval)) return c.json(err("bad_request", "Unknown interval."), 400);
+  /**
+   * One candle source for the chart and the analysis workspace: OpenAlgo via
+   * the adapter when configured (a failure is UNAVAILABLE, never demo), demo
+   * only when no source is configured and demo mode is on.
+   */
+  type Loaded =
+    | { source: "openalgo"; as_of: string; data_state: DataState; candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[] }
+    | { source: "demo"; note: string; data_state: DataState; candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[] }
+    | { source: "unavailable"; reason: string; data_state: DataState };
+  async function loadCandles(userId: string, exchange: string, symbol: string, interval: MdInterval): Promise<Loaded> {
     if (marketdata.configured) {
       const days = { "1minute": 3, "5minute": 7, "15minute": 15, "30minute": 30, "60minute": 60, day: 365 }[interval];
       // Calendar days in IST (the exchange's day), not UTC.
       const istDate = (ms: number) => new Date(ms + 19_800_000).toISOString().slice(0, 10);
       const nowMs = Date.now();
-      const r = await marketdata.history(c.get("user").id, { exchange, symbol, interval, from: istDate(nowMs - days * 86_400_000), to: istDate(nowMs) });
-      if (r.state === "ok") {
-        const last = r.data.candles.at(-1)?.time ?? null;
-        return c.json({ source: "openalgo", interval, as_of: r.data.as_of, data_state: candleState(exchange, interval, last),
-          candles: r.data.candles.map((k) => ({ time: new Date(k.time * 1000).toISOString(), open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume })) });
-      }
-      // A configured but failing live source is never papered over with demo data.
-      return c.json({ source: "unavailable", reason: r.reason, data_state: unavailableState(r.reason) }, 503);
+      const r = await marketdata.history(userId, { exchange, symbol, interval, from: istDate(nowMs - days * 86_400_000), to: istDate(nowMs) });
+      if (r.state === "ok") return { source: "openalgo", as_of: r.data.as_of, data_state: candleState(exchange, interval, r.data.candles.at(-1)?.time ?? null), candles: r.data.candles };
+      return { source: "unavailable", reason: r.reason, data_state: unavailableState(r.reason) };
     }
-    if (cfg.BREAKOUT_DEMO_DATA) return c.json({ ...demoCandles(symbol, interval), data_state: demoState() });
-    const known = findInstrument(exchange, symbol);
-    const reason = known
+    if (cfg.BREAKOUT_DEMO_DATA) {
+      const d = demoCandles(symbol, interval);
+      return { source: "demo", note: d.note, data_state: demoState(),
+        candles: d.candles.map((k) => ({ time: Math.floor(Date.parse(k.time) / 1000), open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume })) };
+    }
+    const reason = findInstrument(exchange, symbol)
       ? "Live candle data is not connected. The read-only OpenAlgo adapter is a separate, approved service (see the Integration Health panel)."
       : "Live candle data is not connected, and this symbol is not in the sample catalog.";
-    return c.json({ source: "unavailable", reason, data_state: unavailableState(reason) }, 503);
+    return { source: "unavailable", reason, data_state: unavailableState(reason) };
+  }
+  type Parsed = { ok: true; exchange: string; symbol: string; interval: MdInterval } | { ok: false; error: string };
+  const parseInstrument = (c: { req: { query: (k: string) => string | undefined } }): Parsed => {
+    const exchange = (c.req.query("exchange") ?? "NSE").toUpperCase();
+    const symbol = (c.req.query("symbol") ?? "").toUpperCase();
+    const interval = (c.req.query("interval") ?? "30minute") as MdInterval;
+    if (!symbol || !(EXCHANGES as readonly string[]).includes(exchange)) return { ok: false, error: "exchange and symbol are required." };
+    if (!(MD_INTERVALS as readonly string[]).includes(interval)) return { ok: false, error: "Unknown interval." };
+    return { ok: true, exchange, symbol, interval };
+  };
+
+  api.get("/instruments/candles", async (c) => {
+    const q = parseInstrument(c);
+    if (!q.ok) return c.json(err("bad_request", q.error), 400);
+    const r = await loadCandles(c.get("user").id, q.exchange, q.symbol, q.interval);
+    if (r.source === "unavailable") return c.json(r, 503);
+    const iso = r.candles.map((k) => ({ ...k, time: new Date(k.time * 1000).toISOString() }));
+    return c.json(r.source === "openalgo"
+      ? { source: "openalgo", interval: q.interval, as_of: r.as_of, data_state: r.data_state, candles: iso }
+      : { source: "demo", interval: q.interval, note: r.note, data_state: r.data_state, candles: iso });
+  });
+
+  // Market structure for the analysis workspace — Breakout chart aids computed
+  // from the same candles the chart shows, with the candles' data state. When
+  // the candles are demo data, `factual` is false and nothing here is evidence.
+  api.get("/instruments/analysis", async (c) => {
+    const q = parseInstrument(c);
+    if (!q.ok) return c.json(err("bad_request", q.error), 400);
+    const r = await loadCandles(c.get("user").id, q.exchange, q.symbol, q.interval);
+    if (r.source === "unavailable") return c.json({ exchange: q.exchange, symbol: q.symbol, interval: q.interval, source: r.source, reason: r.reason, data_state: r.data_state, factual: false, structure: null, summary: null }, 200);
+    const s = marketStructure(r.candles);
+    return c.json({ exchange: q.exchange, symbol: q.symbol, interval: q.interval, source: r.source, data_state: r.data_state, factual: r.source === "openalgo",
+      structure: s, summary: describeStructure(s),
+      method: `Swing highs/lows (2 bars either side) and the prior ${s.levels.lookback}-bar range, computed by Breakout from the displayed candles. Chart aids, not TradeOS signals.` });
   });
   api.get("/instruments/quote", async (c) => {
     const exchange = (c.req.query("exchange") ?? "NSE").toUpperCase();
@@ -174,6 +213,44 @@ export function mountFeatures(api: Hono<AppEnv>, deps: {
     const r = await marketdata.quote(c.get("user").id, { exchange, symbol });
     return c.json({ ...r, data_state: r.state === "ok" ? quoteState(exchange) : unavailableState(r.reason) }, r.state === "ok" ? 200 : 503);
   });
+  // --- saved analyses: a dated, server-assembled snapshot of the workspace -----------
+  const SaveBody = z.object({
+    exchange: z.string(), symbol: z.string(), interval: z.enum(MD_INTERVALS),
+    note: z.string().trim().max(2000).nullable().optional(),
+  }).strict();
+  const MAX_SAVED = 200;
+  const savedOut = (r: { id: string; exchange: string; symbol: string; interval: string; note: string | null; snapshot: string; created_at: string }) =>
+    ({ id: r.id, exchange: r.exchange, symbol: r.symbol, interval: r.interval, note: r.note, created_at: r.created_at, snapshot: JSON.parse(r.snapshot) as unknown });
+  api.get("/analyses", (c) => {
+    const exchange = c.req.query("exchange")?.toUpperCase(); const symbol = c.req.query("symbol")?.toUpperCase();
+    return c.json({ analyses: store.listSavedAnalyses(c.get("user").id, { exchange, symbol }).map(savedOut) });
+  });
+  api.post("/analyses", async (c) => {
+    const user = c.get("user").id;
+    const b = SaveBody.safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json(err("bad_request", "Invalid analysis."), 400);
+    const ctx = TradingContext.safeParse({ exchange: b.data.exchange.toUpperCase(), symbol: b.data.symbol });
+    if (!ctx.success) return c.json(err("bad_request", "A valid exchange and symbol are required."), 400);
+    if (store.countSavedAnalyses(user) >= MAX_SAVED) return c.json(err("limit", `You can keep up to ${MAX_SAVED} saved analyses. Delete older ones first.`), 409);
+    // The snapshot is assembled here, from the same sources the workspace shows — never taken from the client.
+    const [evidence, candles] = await Promise.all([
+      buildEvidence(ctx.data, { bridge, tradeos, marketdata, userId: user }),
+      loadCandles(user, ctx.data.exchange, ctx.data.symbol, b.data.interval),
+    ]);
+    const s = candles.source === "unavailable" ? null : marketStructure(candles.candles);
+    const snapshot = {
+      evidence: { retrieved_at: evidence.retrieved_at, partial: evidence.partial,
+        items: evidence.items.map((i) => ({ id: i.id, label: i.label, state: i.state, text: i.text, source: i.source, as_of: i.as_of })) },
+      structure: { source: candles.source, factual: candles.source === "openalgo", data_state: candles.data_state,
+        summary: s ? describeStructure(s) : null },
+    };
+    const row = store.addSavedAnalysis({ user_id: user, exchange: ctx.data.exchange, symbol: ctx.data.symbol, interval: b.data.interval,
+      note: b.data.note || null, snapshot: JSON.stringify(snapshot) });
+    return c.json({ analysis: savedOut(row) }, 201);
+  });
+  api.delete("/analyses/:id", (c) => (store.deleteSavedAnalysis(c.req.param("id"), c.get("user").id)
+    ? c.json({ ok: true }) : c.json(err("not_found", "Saved analysis not found."), 404)));
+
   // F&O contract mapping: TradeOS's recorded F&O lot size checked against the
   // broker instrument master (via OpenAlgo) for the near-month futures contract.
   // A disagreement is shown, never resolved by guessing.

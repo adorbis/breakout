@@ -203,7 +203,7 @@ try {
   });
   await step("scanner: rows, unknown verdict badged, filters, sort, context menu → add to watchlist", async () => {
     await nav(page, "Scanner").click();
-    await page.getByRole("cell", { name: "IOC", exact: true }).waitFor();
+    await page.getByRole("button", { name: "IOC", exact: true }).waitFor();
     assert.ok(await page.getByText("MEGA_NEW ?").isVisible(), "unrecognized verdict passthrough");
     await page.getByLabel("Filter symbol").fill("SB");
     assert.equal(await page.locator("table.data tbody tr").count(), 1);
@@ -216,7 +216,18 @@ try {
     await page.getByRole("menuitem", { name: /FIRE/ }).click();
     assert.equal(await page.locator("table.data tbody tr").count(), 1);
     await page.getByRole("button", { name: "Reset" }).click();
-    await page.getByRole("cell", { name: "SBIN", exact: true }).click({ button: "right" });
+    // Why a row is listed: TradeOS's own fields, and what it did not provide.
+    await page.getByRole("button", { name: "Why IOC CE is listed" }).click();
+    const why = page.locator(".scan-why");
+    await why.getByText("Opportunity score").waitFor();
+    assert.ok(await why.getByText(/Breakout does not score or rank candidates itself/).isVisible());
+    await page.getByRole("button", { name: "Why IOC CE is listed" }).click();
+    await why.waitFor({ state: "detached" });
+    // Prioritise by TradeOS verdict: FIRE rows first.
+    await page.getByLabel("Prioritise by").selectOption("verdict_rank");
+    assert.match(await page.locator("table.data tbody tr").first().innerText(), /FIRE/);
+    await page.getByLabel("Prioritise by").selectOption("opportunity_score");
+    await page.locator("tbody tr").filter({ has: page.getByRole("button", { name: "SBIN", exact: true }) }).first().click({ button: "right" });
     await page.getByRole("menuitem", { name: "Add to watchlist…" }).click();
     await page.getByLabel("New watchlist name").fill("Momentum");
     await page.getByRole("dialog").getByRole("button", { name: "Add" }).click();
@@ -263,13 +274,45 @@ try {
     const prefs = await page.evaluate(async () => (await (await fetch("/api/preferences")).json()).preferences.chart_levels);
     assert.ok(Object.keys(prefs).length === 1, JSON.stringify(prefs));
   });
-  await step("trade analysis: next-candle refusal verbatim; EV not implemented; ledger pending", async () => {
+  await step("instrument workspace: chart, structure (demo, not evidence), scanner context, TradeOS evidence, no manufactured decision", async () => {
     await page.goto(`${ORIGIN}/app/analysis?exchange=NSE&symbol=SBIN`);
-    await page.getByText("indicators not live: last completed 30m candle is 1290 min old").waitFor();
+    await heading(page, "Instrument analysis").waitFor();
+    await page.getByText("indicators not live: last completed 30m candle is 1290 min old").first().waitFor();
     assert.ok(await page.getByText("TradeOS declined to produce a read").isVisible());
-    assert.ok(await page.locator(".panel", { hasText: "Expected value (EV)" }).getByText("Not implemented in TradeOS").isVisible());
-    assert.ok(await page.locator("main").getByText("Momentum").isVisible(), "watchlists containing SBIN listed");
-    await shot(page, "08-analysis");
+    assert.ok(await page.locator(".ws-facts").getByText("Momentum").isVisible(), "watchlists containing SBIN listed");
+    // Chart and market structure from DEMO candles: drawn, flagged, never evidence.
+    assert.ok(await page.locator(".ws-chart canvas").first().isVisible());
+    const st = page.locator(".panel").filter({ has: page.getByRole("heading", { name: "Market structure", exact: true }) });
+    await st.getByText("DEMO candles").waitFor();
+    assert.ok(await st.getByText("Range position (20 bars)").isVisible());
+    // Decision slot: explicit absence, no ENTER/WAIT/EXIT invented.
+    const dec = page.locator(".panel.ws-decision");
+    assert.ok(await dec.getByText("No authoritative decision available.").isVisible());
+    // Evidence: grouped, same as the AI receives; EV/psychological stated as not published.
+    const ev = page.locator(".panel", { hasText: "This is the same evidence the AI receives" });
+    await ev.locator(".ev", { hasText: "Mathematical (EV)" }).getByText("Not in TradeOS").waitFor();
+    assert.ok(await ev.locator(".ev", { hasText: "Psychological" }).getByText("Not exposed").isVisible());
+    assert.ok(await ev.locator(".ev", { hasText: "Market structure (Breakout chart aid, 30m)" }).getByText("Unavailable").isVisible(), "demo structure is not evidence");
+    assert.ok(await ev.locator(".ws-gaps").getByText("Quote").isVisible(), "gaps list names the missing quote");
+    // Scanner context for SBIN as TradeOS returned it.
+    assert.ok(await ev.locator("table.data").getByText("WATCH").first().isVisible(), "SBIN CE WATCH row from the scanner");
+    await shot(page, "08-workspace");
+  });
+  await step("saved analysis: snapshot with a note, dated, viewable, on the dashboard, deletable", async () => {
+    await page.getByRole("button", { name: "Save snapshot" }).click();
+    await page.getByLabel("Analysis note").fill("Range high is the reference");
+    await page.locator(".modal").getByRole("button", { name: "Save", exact: true }).click();
+    const saved = page.locator(".panel", { hasText: "Saved SBIN analyses" });
+    await saved.getByText("Range high is the reference").waitFor();
+    await saved.getByRole("button", { name: "View" }).click();
+    assert.ok(await saved.getByText(/This is history, not a current reading/).isVisible());
+    assert.ok(await saved.getByText(/demo — not market evidence/).isVisible(), "demo structure stays flagged in the snapshot");
+    await nav(page, "Dashboard").click();
+    await page.locator(".panel", { hasText: "Recent saved analyses" }).getByText("Range high is the reference").waitFor();
+    await page.goto(`${ORIGIN}/app/analysis?exchange=NSE&symbol=SBIN`);
+    const saved2 = page.locator(".panel", { hasText: "Saved SBIN analyses" });
+    await saved2.getByRole("button", { name: /Delete saved analysis/ }).click();
+    await saved2.getByText(/No saved analyses for SBIN yet/).waitFor();
   });
   await step("positions: WF-08 service ERROR with unreadable broker books", async () => {
     await nav(page, "Positions").click();
@@ -312,6 +355,11 @@ try {
     await page.locator(".ctx-chip", { hasText: "SBIN" }).waitFor();
     assert.ok(await page.getByText("AI analysis · not a TradeOS decision").isVisible());
     const box = page.getByRole("textbox").last();
+    // Context-aware starter question fills the composer for review; it does not send.
+    const before = gw.requests.length;
+    await page.locator(".suggestion").first().click();
+    assert.match(await box.inputValue(), /SBIN/);
+    assert.equal(gw.requests.length, before, "a suggestion never sends by itself");
     await box.fill("Summarise the session");
     await box.press("Enter");
     await page.locator(".msg-assistant").last().waitFor({ timeout: 10_000 });
@@ -387,7 +435,7 @@ try {
     assert.equal(await u.locator("tbody tr").count(), 1);
     await u.getByRole("button", { name: "Actions for ABB" }).click();
     await page.getByRole("menuitem", { name: "Next-candle analysis" }).click();
-    await heading(page, "Trade analysis").waitFor();
+    await heading(page, "Instrument analysis").waitFor();
     assert.match(page.url(), /symbol=ABB/);
   });
   await step("subscription: early access, no billing", async () => {
@@ -444,7 +492,7 @@ try {
     assert.ok(await noHScroll(m), "no page-level horizontal overflow");
     await m.getByRole("button", { name: "Open navigation" }).click();
     await nav(m, "Scanner").click();
-    await m.getByRole("cell", { name: "IOC", exact: true }).waitFor();
+    await m.getByRole("button", { name: "IOC", exact: true }).waitFor();
     assert.ok(await noHScroll(m));
     await shot(m, "14-mobile-scanner");
   });

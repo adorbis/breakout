@@ -168,3 +168,33 @@ test("S1 data-state model: session, lag, daily bar, unmodelled exchange", () => 
   assert.equal(quoteState("NSE", sunday).state, "closed");
   assert.equal(quoteState("MCX", monOpen).state, "delayed");
 });
+
+test("M6 analysis workspace: structure from real candles is factual; demo candles never are", async () => {
+  const { app } = makeApp();
+  const c = await login(app);
+  const r = await call(app, "/instruments/analysis?exchange=NSE&symbol=SBIN&interval=30minute", c);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.source, "openalgo");
+  assert.equal(r.body.factual, true);
+  assert.equal(r.body.structure.bars, 3);
+  assert.match(r.body.method, /not TradeOS signals/);
+
+  const demoCfg = loadConfig({ BREAKOUT_ENV: "test", BREAKOUT_PUBLIC_ORIGIN: ORIGIN, BREAKOUT_COOKIE_SECURE: "false",
+    BREAKOUT_DB_PATH: join(dir, "m.db"), BREAKOUT_LOGIN_RATE_PER_MIN: "1000", BREAKOUT_DEMO_DATA: "true" });
+  const demoApp = createApp({ cfg: demoCfg, store, gateway: createGateway(demoCfg) });
+  const d = await call(demoApp, "/instruments/analysis?exchange=NSE&symbol=SBIN&interval=30minute", await login(demoApp));
+  assert.equal(d.body.source, "demo");
+  assert.equal(d.body.factual, false, "demo structure is drawn but never factual");
+  assert.equal(d.body.data_state.state, "demo");
+});
+
+test("M7 Copilot evidence includes market structure from real candles, labelled as a Breakout chart aid", async () => {
+  const { cfg } = makeApp();
+  const deps = { bridge: createBridge(cfg), tradeos: createTradeOS(cfg), marketdata: createMarketData(cfg), userId: "u1" };
+  const e = await buildEvidence({ exchange: "NSE", symbol: "SBIN" }, deps, { now: () => Date.parse("2026-11-15T05:00:00Z") });
+  const s = e.items.find((i) => i.id === "structure")!;
+  assert.equal(s.state, "idle", "Sunday: last-session candles");
+  assert.match(s.text, /^MARKET CLOSED: Last close/);
+  assert.match(s.text, /not a TradeOS signal/);
+  assert.equal(s.source, "openalgo candles");
+});

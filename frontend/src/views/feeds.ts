@@ -8,6 +8,8 @@ export interface ScanRow {
   p_score: number | null; opportunity_score: number | null; execution_score: number | null; last_price: number | null;
   signal_quality: string | null; breakout_quality: string | null; entry_quality: string | null; regime: string | null;
   age_label: string | null;
+  /** Minutes since TradeOS scanned the row, when known (sorting by freshness). */
+  age_minutes: number | null;
 }
 export type ScanResult =
   | { kind: "v1"; rows: ScanRow[]; as_of: string; stale: boolean; ageSeconds: number; last_scan_at: string | null; window: "live" | "no_live_scan" }
@@ -27,6 +29,7 @@ export async function loadScanner(): Promise<ScanResult> {
       p_score: c.p_score, opportunity_score: c.opportunity_score, execution_score: null, last_price: c.last_price,
       signal_quality: null, breakout_quality: null, entry_quality: null, regime: null,
       age_label: c.scanned_at,
+      age_minutes: Number.isFinite(Date.parse(c.scanned_at)) ? Math.max(0, Math.round((Date.now() - Date.parse(c.scanned_at)) / 60_000)) : null,
     }));
     return { kind: "v1", rows, as_of: v1.data.as_of, stale: v1.stale, ageSeconds: v1.ageSeconds, last_scan_at: v1.data.last_scan_at, window: rows.length ? "live" : "no_live_scan" };
   }
@@ -36,6 +39,7 @@ export async function loadScanner(): Promise<ScanResult> {
       p_score: null, opportunity_score: r.opportunity_score, execution_score: r.execution_score, last_price: r.last_price,
       signal_quality: r.signal_quality, breakout_quality: r.breakout_quality, entry_quality: r.entry_quality, regime: r.regime,
       age_label: r.scan_age_minutes === null ? null : `${r.scan_age_minutes} min`,
+      age_minutes: r.scan_age_minutes,
     });
     return { kind: "bridge", rows: [...br.data.longs.map(map), ...br.data.shorts.map(map)], fetched_at: br.fetched_at,
       window: br.data.window, last_scan_ist: br.data.last_scan_ist, date_note: br.data.date_note, served_at_ist: br.data.served_at_ist };

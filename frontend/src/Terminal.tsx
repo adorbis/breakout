@@ -13,7 +13,8 @@ import { navigate, useRoute } from "./router.ts";
 import {
   ContextMenuProvider, Drawer, Dropdown, Empty, Modal, Splitter, StateChip, ToastProvider, Tone, ago, fmtWhen, useLoad, useToast, DataStateBadge,
 } from "./ui.tsx";
-import { AnalysisView, DashboardView, MarketView, PositionsPage, ScannerView, type Nav } from "./views/Intel.tsx";
+import { DashboardView, MarketView, PositionsPage, ScannerView, type Nav } from "./views/Intel.tsx";
+import { InstrumentWorkspace } from "./views/Workspace.tsx";
 import { AccountView, AdminView, AlertsView, NotificationsView, ProfileView } from "./views/Account.tsx";
 import { WatchlistsView } from "./WatchlistsView.tsx";
 import { SettingsView } from "./SettingsView.tsx";
@@ -26,7 +27,7 @@ const CopilotView = lazy(() => import("./views/CopilotView.tsx").then((m) => ({ 
 type Inst = { exchange: string; symbol: string };
 const NAV: { group: string; items: { id: ViewId; label: string; icon: string; admin?: boolean }[] }[] = [
   { group: "Overview", items: [{ id: "dashboard", label: "Dashboard", icon: "◧" }, { id: "market", label: "Market overview", icon: "◔" }] },
-  { group: "Intelligence", items: [{ id: "scanner", label: "Scanner", icon: "◎" }, { id: "analysis", label: "Trade analysis", icon: "◇" }, { id: "positions", label: "Positions", icon: "▤" }] },
+  { group: "Intelligence", items: [{ id: "scanner", label: "Scanner", icon: "◎" }, { id: "analysis", label: "Instrument analysis", icon: "◇" }, { id: "positions", label: "Positions", icon: "▤" }] },
   { group: "Workspace", items: [{ id: "chart", label: "Charts", icon: "▥" }, { id: "watchlists", label: "Watchlists", icon: "☰" }, { id: "alerts", label: "Alerts", icon: "⚑" }, { id: "copilot", label: "AI Chat", icon: "✦" }] },
   { group: "Account", items: [{ id: "notifications", label: "Notifications", icon: "◉" }, { id: "profile", label: "Profile", icon: "☺" }, { id: "settings", label: "Settings", icon: "⚙" }, { id: "account", label: "Subscription", icon: "◈" }, { id: "admin", label: "Admin", icon: "▣", admin: true }] },
 ];
@@ -284,7 +285,7 @@ const Shell: FC<{ user: User; onLogout: () => void }> = ({ user, onLogout }) => 
     case "dashboard": body = <DashboardView nav={nav} clock={clock.data} refreshSeconds={refresh} displayName={displayName} />; break;
     case "market": body = <MarketView refreshSeconds={refresh} clock={clock.data} onOpen={(v) => go(v)} />; break;
     case "scanner": body = <ScannerView nav={nav} refreshSeconds={refresh} />; break;
-    case "analysis": body = <AnalysisView instrument={instrument} onPick={() => openPalette((i) => go("analysis", i))} nav={nav} />; break;
+    case "analysis": body = <div className="view"><InstrumentWorkspace instrument={instrument} onPick={() => openPalette((i) => go("analysis", i))} nav={nav} prefs={prefs} savePrefs={savePrefs} /></div>; break;
     case "positions": body = <PositionsPage refreshSeconds={refresh} />; break;
     case "chart": body = <ChartView prefs={prefs} savePrefs={savePrefs} focus={instrument} pick={(cb) => openPalette(cb)} />; break;
     case "watchlists": body = <div className="view"><WatchlistsView nav={nav} /></div>; break;

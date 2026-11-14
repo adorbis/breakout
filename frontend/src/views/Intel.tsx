@@ -2,18 +2,19 @@
 // Positions (WF-08) and Trade analysis (next-candle). TradeOS output is
 // rendered inside Authority containers with its own vocabulary; Breakout
 // adds provenance and freshness, never a verdict of its own.
-import { useMemo, useState, type FC } from "react";
+import { Fragment, useMemo, useState, type FC } from "react";
 import {
-  api, type BridgeEngines, type BridgeNextCandle, type InstrumentDetail, type IntegrationsReport,
-  type SessionClock, type WatchlistRecord, type AlertItem, type QuoteResult, type ViewId, type ContractCheck,
+  api, type BridgeEngines, type BridgeNextCandle, type IntegrationsReport,
+  type SessionClock, type WatchlistRecord, type AlertItem, type ViewId, 
 } from "../api.ts";
 import { PositionsView as V1PositionsView, W7ScoresView } from "../Intelligence.tsx";
 import {
   Authority, BridgeState, Dropdown, Empty, LabelBadge, Panel, Provenance, Slider, StateChip, Tabs, Tone,
-  ago, fmtDur, fmtInt, fmtNum, fmtWhen, useContextMenu, useLoad, useSort, type MenuItem, DataStateBadge,
+  ago, fmtDur, fmtInt, fmtNum, fmtWhen, useContextMenu, useLoad, useSort, type MenuItem
 } from "../ui.tsx";
 import { loadScanner, type ScanResult, type ScanRow } from "./feeds.ts";
 import { CapabilityPanel } from "./Capabilities.tsx";
+import { SavedAnalysesPanel } from "./SavedAnalyses.tsx";
 
 export interface Nav {
   chart: (i: { exchange: string; symbol: string }) => void;
@@ -58,8 +59,8 @@ const UniverseTab: FC<{ nav: Nav }> = ({ nav }) => {
               <table className="data">
                 <thead><tr>{th("symbol", "Instrument")}{th("lot_size", "Lot size", "num")}{th("lot_size_as_of", "Lot size recorded")}<th>Instrument key</th><th aria-label="Actions" /></tr></thead>
                 <tbody>{rows.map((i) => (
-                  <tr key={i.instrument_key} onContextMenu={(e) => menu(e, i)} onDoubleClick={() => nav.chart(inst(i))}>
-                    <td><b>{i.symbol}</b>{i.active === false && <span className="muted small"> · inactive</span>}</td>
+                  <tr key={i.instrument_key} onContextMenu={(e) => menu(e, i)} onDoubleClick={() => nav.analysis(inst(i))}>
+                    <td><button className="sym-link" onClick={() => nav.analysis(inst(i))} title="Open instrument analysis"><b>{i.symbol}</b></button>{i.active === false && <span className="muted small"> · inactive</span>}</td>
                     <td className="num">{fmtInt(i.lot_size)}</td>
                     <td className="muted">{i.lot_size_as_of ? fmtWhen(i.lot_size_as_of) : "—"}</td>
                     <td><code className="small">{i.instrument_key}</code></td>
@@ -87,6 +88,27 @@ function ScanProvenance({ r }: { r: ScanResult }) {
 }
 
 const KNOWN_VERDICTS = ["FIRE", "WAIT", "WATCH", "SKIP", "AVOID", "CASH_ONLY", "BLOCKED"];
+/** Presentation order of TradeOS's own verdicts (most actionable first). Breakout adds no verdicts. */
+const VERDICT_RANK: Record<string, number> = { FIRE: 6, WATCH: 5, WAIT: 4, CASH_ONLY: 3, SKIP: 2, AVOID: 1, BLOCKED: 0 };
+
+/** Everything TradeOS supplied for a scanner row, and what it did not supply. */
+const ScanWhy: FC<{ r: ScanRow; src: "v1" | "bridge"; onOpen: () => void }> = ({ r, src, onOpen }) => {
+  const fields: [string, string | number | null][] = [
+    ["Verdict", r.verdict.value], ["Direction", r.direction.value], ["P-score", r.p_score], ["Opportunity score", r.opportunity_score],
+    ["Execution score", r.execution_score], ["Signal quality", r.signal_quality], ["Breakout quality", r.breakout_quality],
+    ["Entry quality", r.entry_quality], ["Regime at scan", r.regime], ["Last price at scan", r.last_price], ["Scan age", r.age_label],
+  ];
+  const given = fields.filter(([, v]) => v !== null && v !== "");
+  const missing = fields.filter(([, v]) => v === null || v === "").map(([k]) => k);
+  return (
+    <div className="scan-why">
+      <dl>{given.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{typeof v === "number" ? fmtNum(v, Number.isInteger(v) ? 0 : 2) : v}</dd></div>)}</dl>
+      {missing.length > 0 && <p className="muted small">Not provided by TradeOS for this row: {missing.join(", ")}.</p>}
+      <p className="muted small">Source: TradeOS scanner via {src === "v1" ? "contract v1" : "the read-only bridge"}. These are TradeOS's own values; Breakout does not score or rank candidates itself.
+        <button className="btn btn-sm" onClick={onOpen}>Open instrument analysis</button></p>
+    </div>
+  );
+};
 
 export const ScannerView: FC<{ nav: Nav; refreshSeconds: number }> = ({ nav, refreshSeconds }) => {
   const { data, error, busy, refresh } = useLoad(loadScanner, refreshSeconds || 0);
@@ -94,7 +116,9 @@ export const ScannerView: FC<{ nav: Nav; refreshSeconds: number }> = ({ nav, ref
   const [q, setQ] = useState("");
   const [minScore, setMinScore] = useState(0);
   const [verdicts, setVerdicts] = useState<string[]>([]);
-  const { th, apply } = useSort<"symbol" | "verdict" | "opportunity_score" | "execution_score" | "last_price">("opportunity_score");
+  const { th, apply, sort, setSort } = useSort<"symbol" | "verdict" | "opportunity_score" | "execution_score" | "last_price" | "verdict_rank" | "age_minutes">("opportunity_score");
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const toggle = (k: string) => setOpen((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const openMenu = useContextMenu();
 
   const rows = useMemo(() => {
@@ -104,7 +128,8 @@ export const ScannerView: FC<{ nav: Nav; refreshSeconds: number }> = ({ nav, ref
     if (q) r = r.filter((x) => x.symbol.includes(q.toUpperCase()));
     if (minScore > 0) r = r.filter((x) => (x.opportunity_score ?? -1) >= minScore);
     if (verdicts.length) r = r.filter((x) => verdicts.includes(x.verdict.value) || (verdicts.includes("OTHER") && x.verdict._unrecognized));
-    return apply(r, (x, k) => (k === "verdict" ? x.verdict.value : k === "symbol" ? x.symbol : x[k]));
+    return apply(r, (x, k) => (k === "verdict" ? x.verdict.value : k === "symbol" ? x.symbol
+      : k === "verdict_rank" ? (VERDICT_RANK[x.verdict.value] ?? -1) * 1000 + (x.opportunity_score ?? 0) : x[k]));
   }, [data, tab, q, minScore, verdicts, apply]);
 
   const rowMenu = (e: React.MouseEvent, r: ScanRow) => openMenu(e, [
@@ -131,6 +156,14 @@ export const ScannerView: FC<{ nav: Nav; refreshSeconds: number }> = ({ nav, ref
               <input type="search" placeholder="Filter symbol…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Filter symbol" />
               <Dropdown label={`Verdict${verdicts.length ? ` (${verdicts.length})` : ""} ▾`} items={verdictItems} />
               <Slider label="Min opportunity" min={0} max={100} step={5} value={minScore} onChange={setMinScore} />
+              <label className="field"><span className="field-label">Prioritise by</span>
+                <select aria-label="Prioritise by" value={sort.key === "verdict_rank" || sort.key === "age_minutes" || sort.key === "execution_score" ? sort.key : "opportunity_score"}
+                  onChange={(e) => { const k = e.target.value as typeof sort.key; setSort({ key: k, dir: k === "age_minutes" ? 1 : -1 }); }}>
+                  <option value="opportunity_score">TradeOS opportunity score</option>
+                  <option value="verdict_rank">TradeOS verdict, then opportunity</option>
+                  <option value="execution_score">TradeOS execution score</option>
+                  <option value="age_minutes">Freshest scan first</option>
+                </select></label>
               {(q || minScore || verdicts.length) ? <button className="btn btn-sm" onClick={() => { setQ(""); setMinScore(0); setVerdicts([]); }}>Reset</button> : null}
             </div>
             {error && <Empty title="Breakout API error" tone="err">{error}</Empty>}
@@ -147,8 +180,11 @@ export const ScannerView: FC<{ nav: Nav; refreshSeconds: number }> = ({ nav, ref
                         {th("last_price", "Last", "num")}<th>Signal</th><th>Breakout</th><th>Entry</th><th>Regime</th><th>Age</th><th aria-label="Actions" /></tr></thead>
                       <tbody>
                         {rows.map((r) => (
-                          <tr key={`${r.instrument_key}:${r.direction.value}`} onContextMenu={(e) => rowMenu(e, r)} onDoubleClick={() => nav.chart(r)}>
-                            <td><b>{r.symbol}</b></td>
+                          <Fragment key={`${r.instrument_key}:${r.direction.value}`}>
+                          <tr onContextMenu={(e) => rowMenu(e, r)} onDoubleClick={() => nav.analysis(r)} className={open.has(`${r.instrument_key}:${r.direction.value}`) ? "row-open" : ""}>
+                            <td><button className="icon-btn row-toggle" aria-expanded={open.has(`${r.instrument_key}:${r.direction.value}`)} aria-label={`Why ${r.symbol} ${r.direction.value} is listed`}
+                              onClick={() => toggle(`${r.instrument_key}:${r.direction.value}`)}>{open.has(`${r.instrument_key}:${r.direction.value}`) ? "▾" : "▸"}</button>
+                              <button className="sym-link" onClick={() => nav.analysis(r)} title="Open instrument analysis"><b>{r.symbol}</b></button></td>
                             <td><LabelBadge l={r.direction} kind="direction" /></td>
                             <td><LabelBadge l={r.verdict} kind="verdict" /></td>
                             <td className="num">{fmtInt(r.opportunity_score)}</td>
@@ -158,12 +194,14 @@ export const ScannerView: FC<{ nav: Nav; refreshSeconds: number }> = ({ nav, ref
                             <td className="muted">{r.age_label ?? "—"}</td>
                             <td><button className="icon-btn" aria-label={`Actions for ${r.symbol}`} onClick={(e) => rowMenu(e, r)}>⋯</button></td>
                           </tr>
+                          {open.has(`${r.instrument_key}:${r.direction.value}`) && <tr className="row-detail"><td colSpan={12}><ScanWhy r={r} src={data.kind} onOpen={() => nav.analysis(r)} /></td></tr>}
+                          </Fragment>
                         ))}
                       </tbody>
                     </table>
                   </div>
                 )}
-                <p className="muted small">Right-click or ⋯ for actions; double-click opens the chart. Verdicts outside Breakout's known vocabulary show a “?” and are passed through unchanged.</p>
+                <p className="muted small">▸ shows why TradeOS listed a row; click a symbol (or double-click a row) for instrument analysis; right-click or ⋯ for more. Verdicts outside Breakout's known vocabulary show a “?” and are passed through unchanged.</p>
               </Authority>
             )}
           </>
@@ -326,56 +364,8 @@ export const PositionsPage: FC<{ refreshSeconds: number }> = ({ refreshSeconds }
 };
 
 // --- trade analysis / next candle ----------------------------------------------------------------
-export const AnalysisView: FC<{ instrument: { exchange: string; symbol: string } | null; onPick: () => void; nav: Nav }> = ({ instrument, onPick, nav }) => {
-  const detail = useLoad<InstrumentDetail | null>(() => (instrument ? api.instrumentDetail(instrument.exchange, instrument.symbol) : Promise.resolve(null)), 0, [instrument?.exchange, instrument?.symbol]);
-  const key = detail.data?.instrument.instrument_key ?? null;
-  const nc = useLoad(() => (key ? api.nextCandle(key) : Promise.resolve(null)), 0, [key]);
-  const quote = useLoad<QuoteResult | null>(() => (instrument ? api.quote(instrument.exchange, instrument.symbol) : Promise.resolve(null)), 0, [instrument?.exchange, instrument?.symbol]);
-  const contract = useLoad<ContractCheck | null>(() => (instrument ? api.contract(instrument.exchange, instrument.symbol) : Promise.resolve(null)), 0, [instrument?.exchange, instrument?.symbol]);
-  if (!instrument) return <div className="view"><Empty title="Choose an instrument">Use the instrument search (press /) to analyse one.<div><button className="btn btn-primary" onClick={onPick}>Search instruments</button></div></Empty></div>;
-  const d = detail.data?.instrument;
-  return (
-    <div className="view grid-auto">
-      <Panel title={<>{instrument.symbol} <span className="muted">{instrument.exchange}</span></>} className="span-2"
-        actions={<>
-          <button className="btn btn-sm" onClick={onPick}>Change</button>
-          <button className="btn btn-sm" onClick={() => nav.chart(instrument)}>Chart</button>
-          <button className="btn btn-sm" onClick={() => nav.addToWatchlist({ ...instrument, instrument_key: key })}>+ Watchlist</button>
-          <button className="btn btn-sm" onClick={() => nav.ask(instrument)}>Ask AI</button>
-        </>}>
-        <div className="kv">
-          <div><span className="k">Instrument key</span><code>{key ?? "unknown"}</code></div>
-          <div><span className="k">In TradeOS universe</span>{d?.in_tradeos_universe === null ? <span className="muted">unknown (bridge off)</span> : d?.in_tradeos_universe ? "Yes" : "No"}</div>
-          <div><span className="k">Lot size</span>{d?.lot_size ? <>{d.lot_size} <span className="muted small">as recorded by TradeOS {d.lot_size_as_of ? fmtWhen(d.lot_size_as_of) : ""}</span></> : "—"}</div>
-          <div><span className="k">Quote</span>{quote.data?.state === "ok"
-            ? <><span><b>{fmtNum(quote.data.data.ltp)}</b> <DataStateBadge s={quote.data.data_state} /></span><span className="muted small">OpenAlgo · read {ago(quote.data.data.as_of)}</span></>
-            : <span className="muted">{quote.data?.reason ?? "—"}</span>}</div>
-          <div><span className="k">F&amp;O contract (broker master)</span>{!contract.data ? <span className="muted">checking…</span>
-            : contract.data.state !== "ok" ? <span className="muted small">{contract.data.reason}</span>
-            : <><span><code>{contract.data.contract?.symbol}</code> lot {fmtInt(contract.data.contract?.lot_size ?? null)}</span>
-              <span className={`small ${contract.data.lot_size_check === "mismatch" ? "err-text" : "muted"}`}>{contract.data.lot_size_check === "match" ? "matches TradeOS's lot size"
-                : contract.data.lot_size_check === "mismatch" ? `differs from TradeOS's recorded ${contract.data.tradeos?.lot_size} — check before sizing` : "TradeOS lot size not available to compare"}</span></>}</div>
-          {detail.data && <div><span className="k">Your watchlists</span>{detail.data.watchlists.map((w) => w.name).join(", ") || "none"}</div>}
-        </div>
-      </Panel>
-      <Panel title="Next-candle intelligence" className="span-2" actions={<button className="btn btn-sm" onClick={nc.refresh} disabled={!key || nc.busy}>Refresh</button>}>
-        {!key ? <Empty title="No TradeOS instrument key">This instrument has no verified TradeOS key, so TradeOS cannot be asked about it.</Empty> : (
-          <BridgeState feed={nc.data} what="Next-candle">
-            {(n, f) => <NextCandleCard n={n} fetched={f.fetched_at} />}
-          </BridgeState>
-        )}
-      </Panel>
-      <Panel title="Expected value (EV)">
-        <Empty title="Not implemented in TradeOS">TradeOS has no EV gate yet. Breakout does not calculate or simulate expected value, confidence or qualification — this panel will show TradeOS's EV output once it exists.</Empty>
-      </Panel>
-      <Panel title="Trade history">
-        <Empty title="Pending in TradeOS">TradeOS's trade ledger is deployed but its historical backfill has not been run and it has no read feed yet. Breakout will not present partial history as complete.</Empty>
-      </Panel>
-    </div>
-  );
-};
 
-const NextCandleCard: FC<{ n: BridgeNextCandle; fetched: string }> = ({ n, fetched }) => (
+export const NextCandleCard: FC<{ n: BridgeNextCandle; fetched: string }> = ({ n, fetched }) => (
   <Authority title="Next-candle read (speculator)" meta={<Provenance parts={["/analysis/next-candle", n.analysis_time ? `analysis ${fmtWhen(n.analysis_time)}` : null,
     n.indicator_interval ? `${n.indicator_interval} candles` : null, `read ${ago(fetched)}`]} tone={n.status.value === "OK" ? undefined : "warn"} />}>
     {n.status.value !== "OK" ? (<>
@@ -423,11 +413,12 @@ export const DashboardView: FC<{ nav: Nav; clock: SessionClock | null; refreshSe
         </div>
       </Panel>
       <CapabilityPanel className="span-2" compact onOpen={(v) => nav.go(v)} refreshSeconds={refreshSeconds || 60} />
+      <SavedAnalysesPanel title="Recent saved analyses" limit={5} onOpen={(i) => nav.analysis(i)} />
       <Panel title="Scanner snapshot" actions={<button className="btn btn-sm" onClick={() => nav.go("scanner")}>Open scanner</button>}>
         {!scan.data ? <div className="loading-inline">Loading…</div> : scan.data.kind === "none" ? <Empty title="Scanner not connected">{scan.data.reasons[1]}</Empty>
           : scan.data.window === "no_live_scan" ? <Empty title="No live scan in the 30-minute window">{scan.data.kind === "bridge" && scan.data.last_scan_ist ? `Last scan ${scan.data.last_scan_ist} IST (date not provided).` : ""} Not a "no signals" decision.</Empty>
           : <table className="data compact"><tbody>{top.map((r) => (
-            <tr key={r.instrument_key + r.direction.value} onClick={() => nav.chart(r)} className="clickable"><td><b>{r.symbol}</b></td><td><LabelBadge l={r.direction} /></td><td><LabelBadge l={r.verdict} /></td><td className="num">{fmtInt(r.opportunity_score)}</td></tr>))}</tbody></table>}
+            <tr key={r.instrument_key + r.direction.value} onClick={() => nav.analysis(r)} className="clickable" title="Open instrument analysis"><td><b>{r.symbol}</b></td><td><LabelBadge l={r.direction} /></td><td><LabelBadge l={r.verdict} /></td><td className="num">{fmtInt(r.opportunity_score)}</td></tr>))}</tbody></table>}
       </Panel>
       <Panel title="Market sentiment" actions={<button className="btn btn-sm" onClick={() => nav.go("market")}>Market overview</button>}>
         <BridgeState feed={sentiment.data} what="Sentiment">

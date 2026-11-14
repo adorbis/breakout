@@ -9,7 +9,8 @@ import type { MarketData } from "./marketdata.ts";
 import type { TradingContext } from "./policy.ts";
 import { readCapabilities, type Capability, type CapabilityState } from "./capabilities.ts";
 import { findInstrument } from "./instruments.ts";
-import { quoteState } from "./freshness.ts";
+import { candleState, quoteState } from "./freshness.ts";
+import { describeStructure, marketStructure } from "./structure.ts";
 
 export type EvidenceState = CapabilityState | "not_applicable";
 export interface EvidenceItem {
@@ -64,11 +65,14 @@ export async function buildEvidence(
   }
   if (ctx && !key) key = findInstrument(ctx.exchange, ctx.symbol)?.instrument_key ?? null;
 
-  const [caps, scan, nc, quote] = await Promise.all([
+  const istDate = (ms: number) => new Date(ms + 19_800_000).toISOString().slice(0, 10);
+  const [caps, scan, nc, quote, hist] = await Promise.all([
     withBudget(readCapabilities(bridge, tradeos, now), budget),
     ctx && bridge.enabled ? withBudget(bridge.scanner(), budget) : Promise.resolve(null),
     ctx && key && bridge.enabled ? withBudget(bridge.nextCandle(key), budget) : Promise.resolve(null),
     ctx && marketdata.configured ? withBudget(marketdata.quote(deps.userId, { exchange: ctx.exchange, symbol: ctx.symbol }), budget) : Promise.resolve(null),
+    ctx && marketdata.configured ? withBudget(marketdata.history(deps.userId, { exchange: ctx.exchange, symbol: ctx.symbol, interval: "30minute",
+      from: istDate(now() - 30 * 86_400_000), to: istDate(now()) }), budget) : Promise.resolve(null),
   ]);
 
   const items: EvidenceItem[] = [];
@@ -116,6 +120,20 @@ export async function buildEvidence(
         text: clean(q.ltp === null ? "The adapter returned no last traded price." : `${ds.label}: ${price}. ${ds.detail}`),
         source: "openalgo", as_of: q.as_of });
     } else if (quote) items.push({ id: "quote", label: "Quote", state: "unavailable", text: clean(quote.reason), source: "openalgo", as_of: null });
+  }
+
+  // Market structure: Breakout's chart aids from REAL candles only (30-minute bars).
+  if (ctx) {
+    const label = "Market structure (Breakout chart aid, 30m)";
+    if (!marketdata.configured) items.push({ id: "structure", label, state: "unavailable", text: "No real candles: the market-data adapter is not connected. Demo candles are never used as evidence.", source: null, as_of: null });
+    else if (hist === "timeout") { partial = true; items.push({ id: "structure", label, state: "unavailable", text: "Candles did not arrive within the time budget.", source: "openalgo", as_of: null }); }
+    else if (hist && hist.state === "ok" && hist.data.candles.length > 0) {
+      const ds = candleState(ctx.exchange, "30minute", hist.data.candles.at(-1)!.time, new Date(now()));
+      const s = marketStructure(hist.data.candles);
+      items.push({ id: "structure", label, state: ds.state === "live" ? "available" : ds.state === "closed" ? "idle" : "stale",
+        text: clean(`${ds.label}: ${describeStructure(s)} Computed by Breakout from candles; not a TradeOS signal.`),
+        source: "openalgo candles", as_of: new Date(s.last_bar_time! * 1000).toISOString() });
+    } else if (hist) items.push({ id: "structure", label, state: "unavailable", text: clean(hist.state === "ok" ? "The adapter returned no candles." : hist.reason), source: "openalgo", as_of: null });
   }
 
   return {

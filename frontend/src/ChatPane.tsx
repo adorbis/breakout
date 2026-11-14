@@ -44,7 +44,7 @@ export const ChatPane: FC<{
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <Thread hasContext={context !== null} disabled={disabled} disabledReason={disabledReason} />
+      <Thread symbol={context?.symbol ?? null} disabled={disabled} disabledReason={disabledReason} />
     </AssistantRuntimeProvider>
   );
 };

@@ -282,3 +282,26 @@ test("F9 contact form: validated, stored, visible to admins only", async () => {
   const r = await call(app, "/admin/contact-requests", { cookie: a });
   assert.equal(r.body.requests[0].email, "asha@example.com");
 });
+
+test("F10 saved analyses: server-assembled dated snapshot; client cannot supply evidence; demo structure is not factual; owner-scoped", async () => {
+  const { app } = makeApp({ BREAKOUT_DEMO_DATA: "true" });
+  const c1 = await login(app, "trader1", "trader1-password-123");
+  const c2 = await login(app, "boss", "boss-password-1234");
+  const forged = await call(app, "/analyses", { method: "POST", cookie: c1, body: { exchange: "NSE", symbol: "SBIN", interval: "30minute", snapshot: { evidence: "ENTER" } } });
+  assert.equal(forged.status, 400, "a client-supplied snapshot is rejected outright");
+  const r = await call(app, "/analyses", { method: "POST", cookie: c1, body: { exchange: "NSE", symbol: "sbin", interval: "30minute", note: "Watching the range high" } });
+  assert.equal(r.status, 201);
+  const a = r.body.analysis;
+  assert.equal(a.symbol, "SBIN");
+  assert.equal(a.note, "Watching the range high");
+  assert.ok(Date.parse(a.snapshot.evidence.retrieved_at) > 0, "snapshot is dated");
+  assert.ok(a.snapshot.evidence.items.some((i: any) => i.id === "cap.ev" && i.state === "not_implemented"));
+  assert.equal(a.snapshot.structure.source, "demo");
+  assert.equal(a.snapshot.structure.factual, false, "demo structure is never factual");
+  assert.ok(!a.snapshot.evidence.items.some((i: any) => i.id === "structure" && i.state === "available"), "demo candles are not evidence");
+  assert.equal((await call(app, "/analyses?exchange=NSE&symbol=SBIN", { cookie: c1 })).body.analyses.length, 1);
+  assert.equal((await call(app, "/analyses?exchange=NSE&symbol=TCS", { cookie: c1 })).body.analyses.length, 0);
+  assert.equal((await call(app, "/analyses", { cookie: c2 })).body.analyses.length, 0, "other users see nothing");
+  assert.equal((await call(app, `/analyses/${a.id}`, { method: "DELETE", cookie: c2 })).status, 404, "owner-scoped delete");
+  assert.equal((await call(app, `/analyses/${a.id}`, { method: "DELETE", cookie: c1 })).status, 200);
+});

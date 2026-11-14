@@ -81,21 +81,38 @@ const AssistantMessage: FC = () => (
   </MessagePrimitive.Root>
 );
 
-const Empty: FC<{ hasContext: boolean }> = ({ hasContext }) => (
+/** Starter questions that work with the evidence the server attaches; they fill the composer, they do not send. */
+const suggestionsFor = (symbol: string | null): string[] => symbol ? [
+  `Explain what the evidence currently shows for ${symbol}, with sources and data times.`,
+  `What evidence is missing or stale for ${symbol}, and what does that limit?`,
+  `How does ${symbol}'s scanner row (if any) relate to the regime and sentiment readings?`,
+  `Explain the market-structure chart aids for ${symbol} and what they do not tell me.`,
+] : [
+  "Summarise today's TradeOS intelligence coverage: what is available, stale or missing?",
+  "How should I read a CONFLICTED sentiment composite?",
+  "What does it mean when the scanner has no live scan in its 30-minute window?",
+];
+
+const Empty: FC<{ symbol: string | null }> = ({ symbol }) => (
   <div className="empty">
     <h2>Trading Copilot</h2>
-    <p>Ask about concepts, setups, risk and your trading process. Answers are general AI analysis.</p>
+    <p>Ask about concepts, setups, risk and your trading process. Answers are general AI analysis, never a trade recommendation.</p>
     <p className="muted">
       Each message carries the read-only TradeOS evidence shown in the evidence panel, with its freshness. Official TradeOS decisions and broker data are not connected.
-      {hasContext ? "" : " Select an instrument above to give the Copilot context."}
+      {symbol ? "" : " Select an instrument above to give the Copilot context."}
     </p>
+    <div className="suggestions" role="group" aria-label="Suggested questions">
+      {suggestionsFor(symbol).map((q) => (
+        <ThreadPrimitive.Suggestion key={q} prompt={q} send={false} className="suggestion">{q}</ThreadPrimitive.Suggestion>
+      ))}
+    </div>
   </div>
 );
 
-export const Thread: FC<{ hasContext: boolean; disabled: boolean; disabledReason?: string }> = ({ hasContext, disabled, disabledReason }) => (
+export const Thread: FC<{ symbol: string | null; disabled: boolean; disabledReason?: string }> = ({ symbol, disabled, disabledReason }) => (
   <ThreadPrimitive.Root className="thread">
     <ThreadPrimitive.Viewport className="viewport">
-      <AuiIf condition={(s) => s.thread.isEmpty}><Empty hasContext={hasContext} /></AuiIf>
+      <AuiIf condition={(s) => s.thread.isEmpty}><Empty symbol={symbol} /></AuiIf>
       <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
       <ThreadPrimitive.ViewportFooter className="composer-wrap">
         {disabled && <div className="notice" role="status">{disabledReason}</div>}

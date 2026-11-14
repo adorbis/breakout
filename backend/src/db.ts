@@ -141,7 +141,22 @@ export const MIGRATIONS: string[] = [
      message TEXT NOT NULL,
      created_at TEXT NOT NULL);
    CREATE INDEX contact_requests_time ON contact_requests(created_at DESC);`,
+  // 8: saved analyses — a trader's dated snapshot of an instrument workspace (note + evidence states as shown).
+  `CREATE TABLE saved_analyses (
+     id TEXT PRIMARY KEY,
+     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     exchange TEXT NOT NULL,
+     symbol TEXT NOT NULL,
+     interval TEXT NOT NULL,
+     note TEXT,
+     snapshot TEXT NOT NULL,
+     created_at TEXT NOT NULL);
+   CREATE INDEX saved_analyses_user ON saved_analyses(user_id, created_at DESC);`,
 ];
+
+export interface SavedAnalysisRow {
+  id: string; user_id: string; exchange: string; symbol: string; interval: string; note: string | null; snapshot: string; created_at: string;
+}
 
 export type UserRole = "trader" | "admin";
 export interface UserProfile {
@@ -309,6 +324,26 @@ export class Store {
       `SELECT DISTINCT w.user_id, wi.symbol FROM watchlist_items wi JOIN watchlists w ON w.id = wi.watchlist_id
        JOIN users u ON u.id = w.user_id WHERE u.disabled = 0 AND wi.symbol IN (${marks})`,
     ).all(...symbols) as { user_id: string; symbol: string }[];
+  }
+
+  // --- saved analyses (per user, owner-scoped) ------------------------------------
+  addSavedAnalysis(r: Omit<SavedAnalysisRow, "id" | "created_at">): SavedAnalysisRow {
+    const row: SavedAnalysisRow = { ...r, id: randomId(), created_at: now() };
+    this.db.prepare("INSERT INTO saved_analyses (id, user_id, exchange, symbol, interval, note, snapshot, created_at) VALUES (?,?,?,?,?,?,?,?)")
+      .run(row.id, row.user_id, row.exchange, row.symbol, row.interval, row.note, row.snapshot, row.created_at);
+    return row;
+  }
+  listSavedAnalyses(userId: string, opts: { exchange?: string; symbol?: string; limit?: number } = {}): SavedAnalysisRow[] {
+    const where = ["user_id = ?"]; const args: (string | number)[] = [userId];
+    if (opts.exchange && opts.symbol) { where.push("exchange = ? AND symbol = ?"); args.push(opts.exchange, opts.symbol); }
+    args.push(Math.min(opts.limit ?? 50, 200));
+    return this.db.prepare(`SELECT * FROM saved_analyses WHERE ${where.join(" AND ")} ORDER BY created_at DESC LIMIT ?`).all(...args) as unknown as SavedAnalysisRow[];
+  }
+  countSavedAnalyses(userId: string): number {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM saved_analyses WHERE user_id = ?").get(userId) as { n: number }).n;
+  }
+  deleteSavedAnalysis(id: string, userId: string): boolean {
+    return this.db.prepare("DELETE FROM saved_analyses WHERE id = ? AND user_id = ?").run(id, userId).changes > 0;
   }
 
   // --- contact requests (public site) ------------------------------------------

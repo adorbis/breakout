@@ -314,7 +314,7 @@ export function useSort<K extends string>(initial: K, dir: 1 | -1 = -1) {
       if (y === null) return -1;
       return (x < y ? -1 : 1) * sort.dir;
     });
-  return { th, apply, sort };
+  return { th, apply, sort, setSort };
 }
 
 // --- toasts --------------------------------------------------------------------------
