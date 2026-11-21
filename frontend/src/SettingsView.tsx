@@ -88,8 +88,9 @@ export const SettingsView: FC<{
         <Row label="View after sign-in" htmlFor="set-view">
           <select id="set-view" value={p.default_view} onChange={(e) => set({ default_view: e.target.value as Preferences["default_view"] })}>
             <option value="dashboard">Dashboard</option><option value="market">Market overview</option><option value="scanner">Scanner</option>
-            <option value="chart">Charts</option><option value="watchlists">Watchlists</option><option value="positions">Positions</option>
-            <option value="alerts">Alerts</option><option value="copilot">AI Chat</option>
+            <option value="analysis">Instrument analysis</option><option value="research">Research</option><option value="positions">Positions</option>
+            <option value="chart">Charts</option><option value="watchlists">Watchlists</option><option value="journal">Journal</option>
+            <option value="alerts">Alerts</option><option value="copilot">AI Chat</option><option value="connections">Connections</option>
           </select>
         </Row>
         <Row label="Default exchange" htmlFor="set-ex">
@@ -111,6 +112,9 @@ export const SettingsView: FC<{
         </Row>
         <Row label="Context panel" hint="The right-hand instrument and watchlist panel.">
           <Switch label="Show the context panel" checked={p.right_panel_open} onChange={(v) => set({ right_panel_open: v })} />
+        </Row>
+        <Row label="Getting started" hint="The first-run checklist on the Dashboard.">
+          <Switch label="Show the getting-started checklist" checked={!p.onboarding_dismissed} onChange={(v) => set({ onboarding_dismissed: !v })} />
         </Row>
       </Panel>
 

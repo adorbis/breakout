@@ -127,40 +127,6 @@ export const W7ScoresView: FC<{ compact?: boolean }> = ({ compact }) => {
   );
 };
 
-export const ScannerView: FC = () => {
-  const state = useFeed<ScannerData>(api.scanner);
-  return (
-    <FeedFrame title="Scanner" state={state}
-      subtitle="TradeOS scanner decisions, unchanged. Watchlist scores are never mixed into this list.">
-      {(d) => (
-        <>
-          <p className="feed-sub">Last scanner run: <b>{fmtTime(d.last_scan_at)}</b></p>
-          {d.candidates.length === 0 ? <div className="notice">TradeOS reports no scanner candidates.</div> : (
-            <div className="table-wrap">
-              <table className="data">
-                <thead><tr><th>Instrument</th><th>Verdict</th><th>Dir</th><th className="num">P</th><th className="num">Opportunity</th><th className="num">Price</th><th>Scanned</th></tr></thead>
-                <tbody>
-                  {d.candidates.map((c) => (
-                    <tr key={`${c.instrument_key}:${c.direction}`}>
-                      <td><b>{c.symbol}</b> <span className="muted">{c.exchange}</span></td>
-                      <td><VerdictBadge verdict={c.verdict} /></td>
-                      <td>{c.direction}</td>
-                      <td className="num">{c.p_score ?? "—"}</td>
-                      <td className="num">{c.opportunity_score ?? "—"}</td>
-                      <td className="num">{fmtPrice(c.last_price)}</td>
-                      <td className="muted">{fmtTime(c.scanned_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
-      )}
-    </FeedFrame>
-  );
-};
-
 export const PositionsView: FC = () => {
   const state = useFeed<PositionsData>(api.positions);
   return (

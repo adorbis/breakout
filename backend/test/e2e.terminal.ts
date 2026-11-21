@@ -94,7 +94,10 @@ let current: Page | null = null;
 async function step(name: string, fn: () => Promise<void>) {
   try { await fn(); results.push([name, "PASS"]); }
   catch (e) {
-    results.push([name, "FAIL", (e as Error).message.split("\n")[0]]);
+    // Keep actual/expected so an assertion failure is diagnosable from the log alone.
+    const err = e as Error & { actual?: unknown; expected?: unknown };
+    const ae = "actual" in err ? ` (actual ${JSON.stringify(err.actual)}, expected ${JSON.stringify(err.expected)})` : "";
+    results.push([name, "FAIL", `${err.message.split("\n")[0]}${ae}`]);
     await current?.screenshot({ path: join(out, `FAIL-${results.length}.png`) }).catch(() => {});
   }
 }
@@ -159,6 +162,8 @@ try {
     await page.getByRole("heading", { name: /professional trading workspace/i }).waitFor();
     await page.goto(`${ORIGIN}/app/market`);
     await page.getByRole("heading", { name: "Sign in" }).waitFor();
+    assert.ok(await page.getByText(/no email reset in this release/).isVisible(), "honest forgot-password path");
+    assert.ok(await page.getByRole("link", { name: "contact the administrator" }).isVisible());
     await page.getByLabel("Username").fill("trader1");
     await page.getByLabel("Password").fill("trader1-password-xyz");
     await page.getByRole("button", { name: "Sign in" }).click();
@@ -318,7 +323,11 @@ try {
     await nav(page, "Positions").click();
     await page.getByText("Broker books WF-08 could not read").waitFor();
     assert.ok(await page.getByText(/UDAPI100050/).first().isVisible());
-    assert.ok(await page.getByText("Portfolio Stream: not implemented in TradeOS").isVisible());
+    // Portfolio state comes from the live integration report, not hard-coded copy.
+    const pf = page.locator(".ws-group", { hasText: "Portfolio and P&L" });
+    await pf.getByText("Not implemented in TradeOS.").waitFor();
+    assert.ok(await pf.locator(".chip", { hasText: "Not implemented" }).isVisible());
+    assert.ok(await pf.getByRole("link", { name: "View connections" }).isVisible());
     await shot(page, "09-positions");
   });
   await step("alerts: mirrored alerts, search, priority slider, acknowledge, badge updates", async () => {
@@ -458,6 +467,8 @@ try {
     await page.goBack();
     await heading(page, "Scanner").waitFor();
     assert.equal(await page.getByLabel("Filter symbol").inputValue(), "IO", "scanner filter restored after returning");
+    // The scanner feed re-renders after the view remounts; wait for it before counting rows.
+    await page.locator("table.data tbody tr", { hasText: "IOC" }).waitFor();
     assert.equal(await page.locator("table.data tbody tr").count(), 1);
     await page.getByRole("button", { name: "Reset" }).click();
     // F&O universe → analysis.
@@ -482,6 +493,120 @@ try {
     await page.goto(`${ORIGIN}/app/analysis?exchange=NSE&symbol=IOC`);
     await page.locator(".panel", { hasText: "Saved IOC analyses" }).getByRole("button", { name: /Delete saved analysis/ }).click();
   });
+  await step("connections: every integration grouped with what it powers; broker account read-only, no credential fields", async () => {
+    await nav(page, "Connections").click();
+    await heading(page, "Connections").waitFor();
+    const broker = page.locator(".panel", { hasText: "Broker account" });
+    await broker.getByText("Traders do not connect personal broker accounts in Release 1").waitFor();
+    assert.ok(await broker.getByText("never entered in, shown in or sent to the browser").isVisible());
+    assert.equal(await page.locator(".view input, .view textarea").count(), 0, "no input of any kind on Connections");
+    const tradeosPanel = page.locator(".panel", { hasText: "TradeOS — decision authority" });
+    const wf08 = tradeosPanel.locator(".conn-row", { hasText: "WF-08 position monitoring" });
+    await wf08.locator(".chip").first().waitFor();
+    assert.ok(await page.locator(".conn-row", { hasText: "Collector research" }).getByText("Excluded from Release 1").isVisible());
+    await wf08.getByRole("button", { name: "Positions" }).click();
+    await heading(page, "Positions").waitFor();
+    // The top-bar drawer links to the full page.
+    await page.locator(".ttop .chip-btn").click();
+    await page.getByRole("dialog", { name: "Integration health" }).getByRole("button", { name: "All connections" }).click();
+    await heading(page, "Connections").waitFor();
+    await shot(page, "16-connections");
+  });
+  await step("research: per-instrument sources with explicit states, TradeOS evidence, own conversations; reachable from analysis", async () => {
+    await page.goto(`${ORIGIN}/app/analysis?exchange=NSE&symbol=SBIN`);
+    await page.locator(".ws-actions").getByRole("button", { name: "Research", exact: true }).click();
+    await heading(page, "Research").waitFor();
+    assert.match(page.url(), /\/app\/research\?exchange=NSE&symbol=SBIN/);
+    const src = (label: string) => page.locator(".src-row", { hasText: label });
+    await src("TradeOS news & events").getByText("Not exposed").waitFor();
+    assert.ok(await src("Collector research").getByText("Excluded from Release 1").isVisible());
+    assert.ok(await src("BlackRock AladdinSDK").getByText("Conditional").isVisible());
+    await page.locator(".panel", { hasText: "TradeOS evidence" }).locator(".ev").first().waitFor();
+    // The AI Chat step above created an SBIN conversation; it is listed and opens.
+    const convPanel = page.locator(".panel", { hasText: "AI conversations about SBIN" });
+    await convPanel.locator(".sym-link").first().click();
+    await heading(page, "AI Chat").waitFor();
+    assert.match(page.url(), /\/app\/copilot\?conversation=/);
+    await page.goBack();
+    await heading(page, "Research").waitFor();
+    await shot(page, "17-research");
+  });
+  await step("journal: analyses and AI conversations by IST day; URL filters (symbol, type, day) keep the instrument; opens both; ledger pending", async () => {
+    await page.goto(`${ORIGIN}/app/analysis?exchange=NSE&symbol=SBIN`);
+    await page.getByRole("button", { name: "Save snapshot" }).click();
+    await page.getByLabel("Analysis note").fill("Journal check");
+    await page.locator(".modal").getByRole("button", { name: "Save", exact: true }).click();
+    await page.locator(".panel", { hasText: "Saved SBIN analyses" }).getByText("Journal check").waitFor();
+    await nav(page, "Journal").click();
+    await heading(page, "Journal").waitFor();
+    const entry = page.locator(".journal-entry", { hasText: "Journal check" });
+    await entry.waitFor();
+    assert.ok(await page.locator(".journal-entry", { hasText: "AI conversation" }).first().isVisible());
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    assert.ok(await page.locator(".journal-day h3").first().isVisible());
+    await page.getByLabel("Filter journal by symbol").fill("SBIN");
+    await page.getByRole("radio", { name: "Analyses" }).click();
+    await page.waitForURL(/q=SBIN/);
+    assert.doesNotMatch(page.url(), /[?&]symbol=/, "journal filter never sets the terminal instrument");
+    assert.match(page.url(), /kind=analysis/);
+    assert.equal(await page.locator(".journal-entry", { hasText: "AI conversation" }).count(), 0);
+    await page.getByLabel("Journal day").fill("2020-01-01");
+    await page.getByText("No entries match these filters").waitFor();
+    await page.getByLabel("Journal day").fill(today);
+    await entry.waitFor();
+    await page.reload();
+    await entry.waitFor();
+    assert.equal(await page.getByLabel("Filter journal by symbol").inputValue(), "SBIN", "filters survive reload via the URL");
+    await page.getByRole("button", { name: "Clear" }).click();
+    await page.locator(".journal-entry", { hasText: "AI conversation" }).first().waitFor();
+    const ledger = page.locator(".panel", { hasText: "TradeOS trade history & outcomes" });
+    assert.ok(await ledger.locator(".chip", { hasText: "Pending" }).isVisible());
+    await shot(page, "18-journal");
+    await page.locator(".journal-entry", { hasText: "AI conversation" }).first().getByRole("button", { name: "Open conversation" }).click();
+    await heading(page, "AI Chat").waitFor();
+    await page.goBack();
+    await page.locator(".journal-entry", { hasText: "Journal check" }).getByRole("button", { name: "Open analysis" }).click();
+    await page.locator(".ws-id h2", { hasText: "SBIN" }).waitFor();
+    await page.locator(".panel", { hasText: "Saved SBIN analyses" }).getByRole("button", { name: /Delete saved analysis/ }).click();
+  });
+  await step("onboarding: checklist ticks come from real records; dismiss persists across reload; Settings restores it", async () => {
+    await nav(page, "Dashboard").click();
+    const card = page.locator(".panel", { hasText: "Getting started" });
+    await card.waitFor();
+    assert.ok(await card.locator("li.done", { hasText: "Create a watchlist" }).isVisible(), "trader has watchlists");
+    assert.ok(await card.locator("li.done", { hasText: "Ask the AI about an instrument" }).isVisible(), "trader has a conversation");
+    assert.ok(await card.locator("li.done", { hasText: "Choose an instrument" }).isVisible());
+    await card.getByRole("button", { name: "Connections" }).click();
+    await heading(page, "Connections").waitFor();
+    await nav(page, "Dashboard").click();
+    await card.getByRole("button", { name: "Dismiss" }).click();
+    await card.waitFor({ state: "detached" });
+    await page.waitForTimeout(700); // preference save is debounced
+    await page.reload();
+    await page.getByText(/Welcome, /).waitFor();
+    assert.equal(await page.locator(".panel", { hasText: "Getting started" }).count(), 0, "stays dismissed");
+    await nav(page, "Settings").click();
+    const sw = page.getByRole("switch", { name: "Show the getting-started checklist" });
+    assert.equal(await sw.getAttribute("aria-checked"), "false");
+    await sw.click();
+    await page.waitForTimeout(300);
+    await nav(page, "Dashboard").click();
+    await page.locator(".panel", { hasText: "Getting started" }).waitFor();
+  });
+  await step("load failure: a failed Breakout request shows a retryable error, never endless loading", async () => {
+    const before = errors.length;
+    await page.route("**/api/intel/sentiment", (r) => r.fulfill({ status: 500, contentType: "application/json", body: '{"error":"Injected failure"}' }));
+    await nav(page, "Market overview").click();
+    const err = page.locator(".empty-err", { hasText: "Sentiment: could not load" });
+    await err.waitFor();
+    await page.unroute("**/api/intel/sentiment");
+    await err.getByRole("button", { name: "Retry" }).click();
+    await err.waitFor({ state: "detached" });
+    await page.locator(".panel", { hasText: "Market sentiment" }).first().waitFor();
+    // Only the injected 500s may have reached the console; drop them so the console check stays strict.
+    const injected = errors.splice(before);
+    assert.ok(injected.every((e) => /status of 500/.test(e)), injected.join(" | "));
+  });
   await step("subscription: early access, no billing", async () => {
     await nav(page, "Subscription").click();
     await page.getByRole("heading", { name: "Early Access" }).waitFor();
@@ -498,6 +623,92 @@ try {
     assert.equal(r, 403);
   });
   await step("no browser console errors (trader session)", async () => { if (errors.length) throw new Error(errors.slice(0, 3).join(" | ")); });
+
+  // --- complete trader journey: a brand-new trader, fresh browser, start to finish --------------------
+  await step("JOURNEY: public site → register → onboarding 0/4 → search → analysis → watchlist → snapshot → research → AI → journal → connections → positions → alerts → onboarding 4/4 → sign out", async () => {
+    const jctx = await browser.newContext({ viewport: { width: 1366, height: 820 } });
+    const j = await jctx.newPage();
+    const jerr: string[] = [];
+    j.on("console", (msg) => { if (msg.type() === "error" && !/status of (401|403|503)\b/.test(msg.text())) jerr.push(msg.text()); });
+    j.on("pageerror", (e) => jerr.push(`pageerror: ${e.message}`));
+    try {
+      // Public landing → register.
+      await j.goto(ORIGIN);
+      await j.getByRole("heading", { level: 1, name: /professional trading workspace/i }).waitFor();
+      await j.goto(`${ORIGIN}/register`);
+      await j.getByLabel("Username").fill("journey1");
+      await j.getByLabel("Display name").fill("Journey Trader");
+      await j.getByLabel("Password", { exact: true }).fill("journey1-password-xyz");
+      await j.getByLabel("Confirm password").fill("journey1-password-xyz");
+      await j.getByRole("button", { name: "Create account" }).click();
+      await heading(j, "Dashboard").waitFor();
+      // Onboarding starts empty — derived from records, nothing pre-ticked.
+      const card = j.locator(".panel", { hasText: "Getting started" });
+      await card.getByText("0 of 4 done").waitFor();
+      assert.equal(await card.locator("li.done").count(), 0);
+      // Search (palette from the checklist) → Instrument analysis.
+      await card.getByRole("button", { name: "Search" }).click();
+      await j.getByLabel("Search", { exact: true }).fill("SBIN");
+      await j.getByRole("option", { name: /SBIN/ }).first().waitFor();
+      await j.keyboard.press("Enter");
+      await j.locator(".ws-id h2", { hasText: "SBIN" }).waitFor();
+      assert.match(j.url(), /\/app\/analysis\?exchange=NSE&symbol=SBIN/);
+      // Market data honesty: DEMO chart, unavailable quote, no manufactured decision.
+      await j.locator(".ds-demo").first().waitFor();
+      assert.ok(await j.getByText("No authoritative decision available.").isVisible());
+      // Watchlist (first ever: create inline).
+      await j.locator(".ws-actions").getByRole("button", { name: "+ Watchlist" }).click();
+      await j.getByLabel("New watchlist name").fill("Journey");
+      await j.locator(".modal").getByRole("button", { name: "Add" }).click();
+      await j.getByText("SBIN added").waitFor();
+      // Snapshot with a note.
+      await j.getByRole("button", { name: "Save snapshot" }).click();
+      await j.getByLabel("Analysis note").fill("Journey note");
+      await j.locator(".modal").getByRole("button", { name: "Save", exact: true }).click();
+      await j.locator(".panel", { hasText: "Saved SBIN analyses" }).getByText("Journey note").waitFor();
+      // Research for the same instrument.
+      await j.locator(".ws-actions").getByRole("button", { name: "Research", exact: true }).click();
+      await heading(j, "Research").waitFor();
+      await j.locator(".src-row", { hasText: "TradeOS news & events" }).getByText("Not exposed").waitFor();
+      await j.locator(".panel", { hasText: "Saved SBIN analyses" }).getByText("Journey note").waitFor();
+      // Ask AI from Research → a streamed, labelled answer with the instrument in context.
+      await j.locator(".panel", { hasText: "Research · SBIN" }).getByRole("button", { name: "Ask AI" }).click();
+      await heading(j, "AI Chat").waitFor();
+      await j.locator(".ctx-chip", { hasText: "SBIN" }).waitFor();
+      const box = j.getByRole("textbox").last();
+      await box.fill("What does the evidence say about SBIN?");
+      await box.press("Enter");
+      await j.locator(".msg-assistant").last().waitFor({ timeout: 10_000 });
+      assert.ok(await j.getByText("AI analysis · not a TradeOS decision").first().isVisible());
+      // Journal: both records, by today's IST date.
+      await nav(j, "Journal").click();
+      await j.locator(".journal-entry", { hasText: "Journey note" }).waitFor();
+      await j.locator(".journal-entry", { hasText: "AI conversation" }).first().waitFor();
+      // Connections → Positions → Alerts.
+      await nav(j, "Connections").click();
+      await j.locator(".panel", { hasText: "Broker account" }).waitFor();
+      await nav(j, "Positions").click();
+      await j.locator(".ws-group", { hasText: "Portfolio and P&L" }).waitFor();
+      await nav(j, "Alerts").click();
+      await j.getByText("Morning brief").waitFor();
+      await j.locator("tr", { hasText: "Morning brief" }).getByRole("button", { name: "Acknowledge", exact: true }).click();
+      await j.getByText(/1 acknowledged/).waitFor();
+      // Onboarding now complete from real records.
+      await nav(j, "Dashboard").click();
+      await card.getByText("4 of 4 done").waitFor();
+      assert.equal(await card.locator("li.done").count(), 4);
+      // Sign out; the terminal is protected again.
+      await j.getByRole("button", { name: /Journey Trader/ }).click();
+      await j.getByRole("menuitem", { name: "Sign out" }).click();
+      await j.getByRole("heading", { name: /professional trading workspace/i }).waitFor();
+      await j.goto(`${ORIGIN}/app/journal`);
+      await j.getByRole("heading", { name: "Sign in" }).waitFor();
+      await shot(j, "20-journey-signed-out");
+      if (jerr.length) throw new Error(`console errors during the journey: ${jerr.slice(0, 3).join(" | ")}`);
+    } finally {
+      await jctx.close();
+    }
+  });
 
   // --- admin --------------------------------------------------------------------------
   const actx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" });
@@ -560,6 +771,43 @@ try {
     await m.getByRole("heading", { name: "IOC" }).first().waitFor();
     assert.match(m.url(), /\/app\/analysis\?exchange=NSE&symbol=IOC/);
     assert.ok(await noHScroll(m), "workspace fits the phone");
+  });
+
+  await step("mobile: connections, research, journal, positions and dashboard (with onboarding) fit at 360/390 px", async () => {
+    for (const width of [360, 390]) {
+      await m.setViewportSize({ width, height: 844 });
+      for (const [path, h] of [["/app/connections", "Broker account"], ["/app/research?exchange=NSE&symbol=SBIN", "TradeOS news & events"],
+        ["/app/journal", "TradeOS trade history & outcomes"], ["/app/positions", "Portfolio and P&L"], ["/app/dashboard", "Getting started"]] as const) {
+        await m.goto(`${ORIGIN}${path}`);
+        await m.getByText(h).first().waitFor();
+        await m.waitForTimeout(200);
+        assert.ok(await noHScroll(m), `${width}px ${path}: no horizontal scroll`);
+      }
+    }
+    await shot(m, "19-mobile-journal-dashboard");
+  });
+
+  await step("mobile sweep: every remaining terminal page fits at 360 and 430 px", async () => {
+    const pages = ["/app/market", "/app/chart?exchange=NSE&symbol=SBIN", "/app/watchlists", "/app/alerts", "/app/copilot",
+      "/app/notifications", "/app/profile", "/app/settings", "/app/account", "/app/analysis?exchange=NSE&symbol=SBIN"];
+    const over: string[] = [];
+    for (const width of [360, 430]) {
+      await m.setViewportSize({ width, height: 844 });
+      for (const path of pages) {
+        await m.goto(`${ORIGIN}${path}`);
+        await m.locator(".view, .copilot").first().waitFor();
+        await m.waitForTimeout(500);
+        if (!(await noHScroll(m))) {
+          const culprit = await m.evaluate(() => {
+            const w = window.innerWidth;
+            const el = [...document.querySelectorAll("body *")].find((e) => { const r = e.getBoundingClientRect(); return r.right > w + 1 && r.width > 0 && getComputedStyle(e).position !== "fixed"; });
+            return el ? `${el.tagName.toLowerCase()}.${[...el.classList].join(".")}` : "?";
+          });
+          over.push(`${width}px ${path} (${culprit})`);
+        }
+      }
+    }
+    assert.deepEqual(over, [], `horizontal overflow: ${over.join("; ")}`);
   });
 
   await step("bridge traffic was GET-only and allowlisted", async () => {

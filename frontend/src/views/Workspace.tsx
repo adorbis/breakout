@@ -9,18 +9,12 @@ import {
   type InstrumentDetail, type Preferences, type QuoteResult,
 } from "../api.ts";
 import { ChartPane } from "../Chart.tsx";
-import { BridgeState, Change, DataStateBadge, fmtPct, Empty, LabelBadge, Panel, Tone, ago, fmtInt, fmtNum, fmtWhen, useLoad } from "../ui.tsx";
+import { BridgeState, Change, DataStateBadge, fmtPct, Empty, LabelBadge, Panel, Pending, Tone, ago, fmtInt, fmtNum, fmtWhen, useLoad } from "../ui.tsx";
 import { NextCandleCard, type Nav } from "./Intel.tsx";
 import { loadScanner } from "./feeds.ts";
 import { SaveAnalysisButton, SavedAnalysesPanel } from "./SavedAnalyses.tsx";
+import { EV_LABEL as STATE_TEXT, EvidenceGroup as Group } from "./evidence.tsx";
 
-const TONE: Record<EvidenceItem["state"], "ok" | "warn" | "err" | "off"> = {
-  available: "ok", idle: "off", stale: "warn", degraded: "warn", unavailable: "err", not_exposed: "off", not_implemented: "off", not_applicable: "off",
-};
-const STATE_TEXT: Record<EvidenceItem["state"], string> = {
-  available: "Available", idle: "Idle / last session", stale: "Stale", degraded: "Degraded", unavailable: "Unavailable",
-  not_exposed: "Not exposed", not_implemented: "Not in TradeOS", not_applicable: "N/A",
-};
 const SEQ: Record<string, string> = {
   higher_highs_higher_lows: "Higher highs, higher lows", lower_highs_lower_lows: "Lower highs, lower lows",
   mixed: "Mixed swings", insufficient: "Too few swings",
@@ -28,22 +22,6 @@ const SEQ: Record<string, string> = {
 const POS: Record<string, string> = {
   above_range: "Above prior range", below_range: "Below prior range", inside_range: "Inside prior range", unknown: "Unknown",
 };
-const when = (s: string | null) => (!s ? null : /^\d{4}-\d{2}-\d{2}T/.test(s) ? fmtWhen(s) : `${s} (TradeOS clock)`);
-
-const Item: FC<{ i: EvidenceItem }> = ({ i }) => (
-  <li className={`ev ev-${i.state}`}>
-    <div className="ev-head"><span className="ev-label">{i.label}</span><Tone tone={TONE[i.state]}>{STATE_TEXT[i.state]}</Tone></div>
-    <p className="ev-text">{i.text}</p>
-    {(i.source || i.as_of) && <div className="prov">{[i.source, when(i.as_of)].filter(Boolean).join(" · ")}</div>}
-  </li>
-);
-const Group: FC<{ title: string; items: EvidenceItem[]; empty?: string; children?: ReactNode }> = ({ title, items, empty, children }) => (
-  <section className="ws-group">
-    <h3>{title}</h3>
-    {items.length ? <ul className="evidence-list">{items.map((i) => <Item key={i.id} i={i} />)}</ul> : empty ? <p className="muted small">{empty}</p> : null}
-    {children}
-  </section>
-);
 
 export const InstrumentWorkspace: FC<{
   instrument: { exchange: string; symbol: string } | null; onPick: () => void; nav: Nav;
@@ -100,6 +78,7 @@ export const InstrumentWorkspace: FC<{
           <button className="btn btn-sm" onClick={onPick}>Change</button>
           <button className="btn btn-sm" onClick={() => nav.addToWatchlist({ ...instrument, instrument_key: key })}>+ Watchlist</button>
           <button className="btn btn-sm" onClick={() => nav.chart(instrument)}>Full chart</button>
+          <button className="btn btn-sm" onClick={() => nav.research(instrument)}>Research</button>
           <SaveAnalysisButton exchange={instrument.exchange} symbol={instrument.symbol} interval={interval} onSaved={() => setSavedKey((n) => n + 1)} />
           <button className="btn btn-sm btn-primary" onClick={() => nav.ask(instrument)}>Ask AI</button>
         </div>
@@ -143,7 +122,7 @@ export const InstrumentWorkspace: FC<{
 
           <Panel title="Next-candle (TradeOS)" actions={<button className="btn btn-sm" onClick={nc.refresh} disabled={!key || nc.busy}>Refresh</button>}>
             {!key ? <Empty title="No TradeOS instrument key">TradeOS cannot be asked about an instrument without a verified key.</Empty>
-              : <BridgeState feed={nc.data} what="Next-candle">{(n, f) => <NextCandleCard n={n} fetched={f.fetched_at} />}</BridgeState>}
+              : <BridgeState feed={nc.data} error={nc.error} onRetry={nc.refresh} what="Next-candle">{(n, f) => <NextCandleCard n={n} fetched={f.fetched_at} />}</BridgeState>}
           </Panel>
         </div>
 
@@ -155,7 +134,7 @@ export const InstrumentWorkspace: FC<{
 
           <Panel title="Evidence" sub={evidence.data ? `${ev.filter((i) => i.state === "available").length} of ${ev.length} readings available · retrieved ${ago(evidence.data.retrieved_at)}${evidence.data.partial ? " · partial" : ""}` : undefined}
             actions={<button className="btn btn-sm" onClick={evidence.refresh} disabled={evidence.busy}>Refresh</button>}>
-            {!evidence.data ? <div className="loading-inline">Reading…</div> : <>
+            {!evidence.data ? <Pending r={evidence} what="Evidence" /> : <>
               <Group title="Market data" items={pick(["quote", "structure"])} />
               <Group title="Scanner" items={pick(["scanner"])}>
                 {rows.length > 0 && <table className="data compact"><thead><tr><th>Dir</th><th>Verdict</th><th className="num">Opp.</th><th className="num">Exec.</th><th>Qualities</th><th>Age</th></tr></thead>
@@ -169,8 +148,8 @@ export const InstrumentWorkspace: FC<{
               <section className="ws-group ws-gaps">
                 <h3>Gaps</h3>
                 {missing.length + stale.length === 0 ? <p className="muted small">Every reading is available and current.</p> : <ul>
-                  {missing.map((i) => <li key={i.id}><b>{i.label}</b>: {STATE_TEXT[i.state].toLowerCase()}</li>)}
-                  {stale.map((i) => <li key={i.id}><b>{i.label}</b>: {STATE_TEXT[i.state].toLowerCase()}</li>)}
+                  {missing.map((i) => <li key={i.id}><b>{i.label}</b>: {STATE_TEXT[i.state]}</li>)}
+                  {stale.map((i) => <li key={i.id}><b>{i.label}</b>: {STATE_TEXT[i.state]}</li>)}
                 </ul>}
               </section>
               <p className="muted small">This is the same evidence the AI receives for this instrument.</p>
@@ -180,7 +159,7 @@ export const InstrumentWorkspace: FC<{
           <SavedAnalysesPanel instrument={instrument} reloadKey={savedKey} title={`Saved ${instrument.symbol} analyses`} />
 
           <Panel title={`Alerts mentioning ${instrument.symbol}`} actions={<button className="btn btn-sm" onClick={() => nav.go("alerts")}>Alerts centre</button>}>
-            {!alerts.data ? <div className="loading-inline">Loading…</div> : alerts.data.alerts.length === 0
+            {!alerts.data ? <Pending r={alerts} what="Alerts" /> : alerts.data.alerts.length === 0
               ? <p className="muted small">No mirrored TradeOS alert mentions {instrument.symbol}.</p>
               : <ul className="alert-mini">{alerts.data.alerts.slice(0, 6).map((x) => <li key={x.id} className={x.acknowledged_at ? "muted" : ""}><b>{x.title ?? x.message.slice(0, 60)}</b> <span className="muted small">{ago(x.event_time)}</span></li>)}</ul>}
           </Panel>

@@ -255,6 +255,16 @@ test("F7 preferences accept layout/indicator settings and reject unknown ones", 
   assert.equal(r.status, 400);
   r = await call(app, "/preferences", { method: "PUT", cookie: c, body: { panel_sizes: { right: 5 } } });
   assert.equal(r.status, 400, "panel size bounds enforced");
+  // Research, Journal and Connections are valid start views; onboarding dismissal persists and defaults to shown.
+  assert.equal((await call(app, "/preferences", { cookie: c })).body.preferences.onboarding_dismissed, false);
+  for (const v of ["research", "journal", "connections"]) {
+    r = await call(app, "/preferences", { method: "PUT", cookie: c, body: { default_view: v } });
+    assert.equal(r.status, 200, `default_view ${v}`);
+  }
+  r = await call(app, "/preferences", { method: "PUT", cookie: c, body: { onboarding_dismissed: true } });
+  assert.equal(r.body.preferences.onboarding_dismissed, true);
+  assert.equal((await call(app, "/preferences", { method: "PUT", cookie: c, body: { onboarding_dismissed: "yes" } })).status, 400);
+  assert.equal((await call(app, "/preferences", { method: "PUT", cookie: c, body: { default_view: "trade_threads" } })).status, 400);
 });
 
 test("F8 instrument search without the bridge: sample catalogue, labelled; detail lists the user's watchlists", async () => {

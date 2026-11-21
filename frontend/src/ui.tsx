@@ -4,6 +4,7 @@
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type FC, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ApiError, type BridgeFeed, type IntegrationState, type Label, type DataState } from "./api.ts";
+import { linkTo } from "./router.ts";
 
 // --- formatting ---------------------------------------------------------------
 export const fmtNum = (n: number | null | undefined, d = 2) =>
@@ -151,11 +152,49 @@ export function useLoad<T>(load: () => Promise<T>, refreshSeconds = 0, deps: unk
   return { data, error, busy, refresh, setData };
 }
 
-/** Renders a bridge feed's non-ok states honestly; children get the data. */
-export function BridgeState<T>({ feed, children, what }: { feed: BridgeFeed<T> | null; what: string; children: (d: T, f: Extract<BridgeFeed<T>, { state: "ok" }>) => ReactNode }) {
-  if (!feed) return <div className="loading-inline">Loading {what}…</div>;
+/** Loading placeholder — one wording everywhere. */
+export const Loading: FC<{ what: string }> = ({ what }) => <div className="loading-inline" role="status">Loading {what}…</div>;
+
+/**
+ * Breakout's own API could not be reached (network, server error, expired session).
+ * Distinct from an upstream integration being unavailable, and always retryable.
+ */
+export const LoadError: FC<{ what: string; error: string; onRetry?: () => void }> = ({ what, error, onRetry }) => (
+  <Empty title={`${what}: could not load`} tone="err">
+    {error}{onRetry && <> <button className="btn btn-sm" onClick={onRetry}>Retry</button></>}
+  </Empty>
+);
+
+/** The placeholder shown while a useLoad result has no data: its error (retryable) or loading. */
+export const Pending: FC<{ r: { error: string | null; refresh: () => void }; what: string }> = ({ r, what }) =>
+  r.error ? <LoadError what={what} error={r.error} onRetry={r.refresh} /> : <Loading what={what.toLowerCase()} />;
+
+/** Loading → error (retryable) → children, for any useLoad result. */
+export function Loaded<T>({ r, what, children }: { r: { data: T | null; error: string | null; refresh: () => void }; what: string; children: (d: T) => ReactNode }) {
+  if (r.data === null && r.error) return <LoadError what={what} error={r.error} onRetry={r.refresh} />;
+  if (r.data === null) return <Loading what={what} />;
+  return <>{children(r.data)}</>;
+}
+
+/** Integration not connected: says so, and points at the page that explains why. */
+export const NotConnected: FC<{ what: string; children: ReactNode }> = ({ what, children }) => (
+  <Empty title={`${what}: not connected`}>
+    {children} <a href="/app/connections" onClick={linkTo("/app/connections")}>View connections</a>
+  </Empty>
+);
+
+/**
+ * Renders a bridge feed's non-ok states honestly; children get the data.
+ * Pass the useLoad error so a failed Breakout request is shown (with Retry) instead of loading forever.
+ */
+export function BridgeState<T>({ feed, children, what, error, onRetry }: {
+  feed: BridgeFeed<T> | null; what: string; error?: string | null; onRetry?: () => void;
+  children: (d: T, f: Extract<BridgeFeed<T>, { state: "ok" }>) => ReactNode;
+}) {
+  if (!feed && error) return <LoadError what={what} error={error} onRetry={onRetry} />;
+  if (!feed) return <Loading what={what} />;
   if (feed.state === "disabled") {
-    return <Empty title={`${what}: not connected`}>The TradeOS bridge is not enabled on this server, and Read Contract v1 is not implemented by TradeOS yet. Nothing is shown rather than guessed.</Empty>;
+    return <NotConnected what={what}>The TradeOS bridge is not enabled on this server, and Read Contract v1 is not implemented by TradeOS yet. Nothing is shown rather than guessed.</NotConnected>;
   }
   if (feed.state === "unavailable") {
     return <Empty title={`${what}: unavailable`} tone="warn">{feed.reason}{feed.last_good_at && <> Last successful read {ago(feed.last_good_at)}.</>} This is a connection state, not a trading decision.</Empty>;

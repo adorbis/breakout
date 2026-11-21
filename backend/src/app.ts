@@ -62,7 +62,7 @@ const Register = z.object({
 }).strict();
 
 const VIEWS = ["dashboard", "market", "scanner", "watchlists", "chart", "analysis", "positions", "alerts", "copilot",
-  "notifications", "profile", "settings", "account", "admin"] as const;
+  "notifications", "profile", "settings", "account", "admin", "research", "journal", "connections"] as const;
 const INDICATORS = ["volume", "sma20", "sma50", "ema20", "vwap", "levels"] as const;
 const SymbolField = z.string().trim().toUpperCase().regex(/^[A-Z0-9][A-Z0-9&_.\- ]{0,39}$/, "symbol: letters, digits, & _ . - (max 40)");
 const WatchlistCreate = z.object({ name: z.string().trim().min(1).max(40) }).strict();
@@ -100,13 +100,15 @@ const PreferencesPatch = z.object({
     .refine((v) => v === undefined || Object.keys(v).length <= 100, "too many instruments"),
   chart_panes: z.array(z.object({ exchange: z.enum(EXCHANGES), symbol: SymbolField, interval: z.enum(CANDLE_INTERVALS) }).strict()).max(4).optional(),
   last_instrument: z.object({ exchange: z.enum(EXCHANGES), symbol: SymbolField }).strict().nullable().optional(),
+  // First-run checklist on the Dashboard, hidden once the trader dismisses it.
+  onboarding_dismissed: z.boolean().optional(),
 }).strict();
 const DEFAULT_PREFERENCES = {
   theme: "system", default_view: "dashboard", default_exchange: "NSE",
   chart_interval: "30minute", auto_refresh_seconds: 30,
   sidebar_collapsed: false, right_panel_open: true, chart_layout: "single",
   chart_indicators: ["volume", "levels"], panel_sizes: {}, alert_min_priority: 1, density: "comfortable",
-  chart_levels: {}, chart_panes: [], last_instrument: null,
+  chart_levels: {}, chart_panes: [], last_instrument: null, onboarding_dismissed: false,
   notify_watchlist_alerts: true, browser_notifications: false, quiet_hours: { enabled: false, start: "22:00", end: "07:00" },
 } as const;
 const MAX_WATCHLISTS = 20;

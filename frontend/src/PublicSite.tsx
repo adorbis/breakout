@@ -211,6 +211,7 @@ export const Login: FC<{ onAuth: (u: User) => void }> = ({ onAuth }) => {
         <button className="btn btn-primary" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
       </form>
       <p className="muted small">No account? <A to="/register">Get access</A></p>
+      <p className="muted small">Forgot your password? Breakout has no email reset in this release — <A to="/contact">contact the administrator</A>, who can restore access.</p>
     </section>
   );
 };

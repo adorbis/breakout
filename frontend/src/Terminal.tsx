@@ -11,13 +11,16 @@ import {
 } from "./api.ts";
 import { navigate, useRoute } from "./router.ts";
 import {
-  ContextMenuProvider, Drawer, Dropdown, Empty, Modal, Splitter, StateChip, ToastProvider, Tone, ago, fmtWhen, useLoad, useToast, DataStateBadge, Change, fmtNum,
+  ContextMenuProvider, Drawer, Dropdown, Empty, Modal, Pending, Splitter, StateChip, ToastProvider, Tone, ago, fmtWhen, useLoad, useToast, DataStateBadge, Change, fmtNum,
 } from "./ui.tsx";
 import { DashboardView, MarketView, PositionsPage, ScannerView, type Nav } from "./views/Intel.tsx";
 import { InstrumentWorkspace } from "./views/Workspace.tsx";
 import { AccountView, AdminView, AlertsView, NotificationsView, ProfileView } from "./views/Account.tsx";
 import { WatchlistsView } from "./WatchlistsView.tsx";
 import { SettingsView } from "./SettingsView.tsx";
+import { ConnectionsView } from "./views/Connections.tsx";
+import { ResearchView } from "./views/ResearchView.tsx";
+import { JournalView } from "./views/JournalView.tsx";
 import { useBrowserNotifications } from "./notify.ts";
 
 // Heavy views (charting library, AI chat runtime) are split into their own chunks.
@@ -27,9 +30,9 @@ const CopilotView = lazy(() => import("./views/CopilotView.tsx").then((m) => ({ 
 type Inst = { exchange: string; symbol: string };
 const NAV: { group: string; items: { id: ViewId; label: string; icon: string; admin?: boolean }[] }[] = [
   { group: "Overview", items: [{ id: "dashboard", label: "Dashboard", icon: "◧" }, { id: "market", label: "Market overview", icon: "◔" }] },
-  { group: "Intelligence", items: [{ id: "scanner", label: "Scanner", icon: "◎" }, { id: "analysis", label: "Instrument analysis", icon: "◇" }, { id: "positions", label: "Positions", icon: "▤" }] },
-  { group: "Workspace", items: [{ id: "chart", label: "Charts", icon: "▥" }, { id: "watchlists", label: "Watchlists", icon: "☰" }, { id: "alerts", label: "Alerts", icon: "⚑" }, { id: "copilot", label: "AI Chat", icon: "✦" }] },
-  { group: "Account", items: [{ id: "notifications", label: "Notifications", icon: "◉" }, { id: "profile", label: "Profile", icon: "☺" }, { id: "settings", label: "Settings", icon: "⚙" }, { id: "account", label: "Subscription", icon: "◈" }, { id: "admin", label: "Admin", icon: "▣", admin: true }] },
+  { group: "Intelligence", items: [{ id: "scanner", label: "Scanner", icon: "◎" }, { id: "analysis", label: "Instrument analysis", icon: "◇" }, { id: "research", label: "Research", icon: "◈" }, { id: "positions", label: "Positions", icon: "▤" }] },
+  { group: "Workspace", items: [{ id: "chart", label: "Charts", icon: "▥" }, { id: "watchlists", label: "Watchlists", icon: "☰" }, { id: "journal", label: "Journal", icon: "▦" }, { id: "alerts", label: "Alerts", icon: "⚑" }, { id: "copilot", label: "AI Chat", icon: "✦" }] },
+  { group: "Account", items: [{ id: "notifications", label: "Notifications", icon: "◉" }, { id: "connections", label: "Connections", icon: "⇄" }, { id: "profile", label: "Profile", icon: "☺" }, { id: "settings", label: "Settings", icon: "⚙" }, { id: "account", label: "Subscription", icon: "◈" }, { id: "admin", label: "Admin", icon: "▣", admin: true }] },
 ];
 const ALL_VIEWS = NAV.flatMap((g) => g.items);
 const viewHref = (v: ViewId, i?: Inst | null) => `/app/${v}${i ? `?exchange=${encodeURIComponent(i.exchange)}&symbol=${encodeURIComponent(i.symbol)}` : ""}`;
@@ -144,6 +147,7 @@ const ContextPanel: FC<{ instrument: Inst | null; nav: Nav; onClose: () => void;
           <div className="btn-row">
             <button className="btn btn-sm" onClick={() => nav.chart(instrument)}>Chart</button>
             <button className="btn btn-sm" onClick={() => nav.analysis(instrument)}>Analysis</button>
+            <button className="btn btn-sm" onClick={() => nav.research(instrument)}>Research</button>
             <button className="btn btn-sm" onClick={() => nav.ask(instrument)}>Ask AI</button>
             <button className="btn btn-sm" onClick={() => nav.addToWatchlist(instrument)}>+ List</button>
           </div>
@@ -155,7 +159,7 @@ const ContextPanel: FC<{ instrument: Inst | null; nav: Nav; onClose: () => void;
           {wl.length > 0 && <select value={cur?.id ?? ""} onChange={(e) => setSel(e.target.value)} aria-label="Choose watchlist">{wl.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select>}
           <button className="icon-btn" onClick={lists.refresh} aria-label="Refresh watchlists" title="Refresh">↻</button>
         </div>
-        {!lists.data ? <div className="loading-inline">Loading…</div> : !cur ? <Empty title="No watchlists"><button className="btn btn-sm" onClick={() => nav.go("watchlists")}>Create</button></Empty> : (
+        {!lists.data ? <Pending r={lists} what="Watchlists" /> : !cur ? <Empty title="No watchlists"><button className="btn btn-sm" onClick={() => nav.go("watchlists")}>Create</button></Empty> : (
           <ul className="wl-quick">
             {cur.items.map((i, k) => (
               <li key={i.id}><button className={`wl-sym${instrument?.symbol === i.symbol ? " on" : ""}`} onClick={() => nav.chart(i)}><span title={`${i.symbol} · ${i.exchange}`}><b>{i.symbol}</b> <span className="muted small">{i.exchange}</span></span>
@@ -175,6 +179,7 @@ const IntegrationDrawer: FC<{ open: boolean; onClose: () => void; report: Integr
   <Drawer open={open} onClose={onClose} title="Integration health" width={480}>
     {!report ? <div className="loading-inline">Loading…</div> : <>
       <div className="btn-row"><button className="btn btn-sm" onClick={onRefresh}>Check now</button>
+        <button className="btn btn-sm" onClick={() => { onClose(); navigate("/app/connections"); }}>All connections</button>
         {isAdmin && <button className="btn btn-sm" onClick={() => { onClose(); navigate("/app/admin"); }}>Admin detail</button>}</div>
       <p className="muted small">Checked {fmtWhen(report.checked_at)}. A connection state is never a trading decision.</p>
       <ul className="integ-list">{report.entries.map((e) => (
@@ -249,12 +254,15 @@ const Shell: FC<{ user: User; onLogout: () => void }> = ({ user, onLogout }) => 
   const nav: Nav = useMemo(() => ({
     chart: (i) => go("chart", { exchange: i.exchange, symbol: i.symbol }),
     analysis: (i) => go("analysis", { exchange: i.exchange, symbol: i.symbol }),
+    research: (i) => go("research", { exchange: i.exchange, symbol: i.symbol }),
     ask: (i) => { setAskAbout({ exchange: i.exchange, symbol: i.symbol, nonce: Date.now() }); go("copilot", { exchange: i.exchange, symbol: i.symbol }); },
     addToWatchlist: (i) => setAddTarget(i),
     go: (v) => go(v as ViewId),
   }), [go]);
+  /** Open one AI conversation (from the Journal or Research); the Copilot reads ?conversation=. */
+  const openConversation = useCallback((id: string) => { navigate(`/app/copilot?conversation=${encodeURIComponent(id)}`); setMobileNav(false); }, []);
   // Instrument picks stay in views that show an instrument; elsewhere they open the chart.
-  const openPalette = useCallback((cb?: (i: Inst) => void) => setPalette(() => cb ?? ((i: Inst) => go(view === "chart" || view === "analysis" || view === "copilot" ? view : "chart", i))), [go, view]);
+  const openPalette = useCallback((cb?: (i: Inst) => void) => setPalette(() => cb ?? ((i: Inst) => go(view === "chart" || view === "analysis" || view === "copilot" || view === "research" ? view : "chart", i))), [go, view]);
 
   // Keyboard: "/" or Ctrl/Cmd+K → instrument switcher; "." → AI Chat; "[" → collapse sidebar.
   useEffect(() => {
@@ -281,15 +289,18 @@ const Shell: FC<{ user: User; onLogout: () => void }> = ({ user, onLogout }) => 
 
   let body: ReactNode;
   switch (view) {
-    case "dashboard": body = <DashboardView nav={nav} clock={clock.data} refreshSeconds={refresh} displayName={displayName} />; break;
+    case "dashboard": body = <DashboardView nav={nav} clock={clock.data} refreshSeconds={refresh} displayName={displayName} prefs={prefs} savePrefs={savePrefs} onPick={() => openPalette((i) => go("analysis", i))} />; break;
     case "market": body = <MarketView refreshSeconds={refresh} clock={clock.data} onOpen={(v) => go(v)} />; break;
     case "scanner": body = <ScannerView nav={nav} refreshSeconds={refresh} />; break;
     case "analysis": body = <div className="view"><InstrumentWorkspace instrument={instrument} onPick={() => openPalette((i) => go("analysis", i))} nav={nav} prefs={prefs} savePrefs={savePrefs} /></div>; break;
     case "positions": body = <PositionsPage refreshSeconds={refresh} />; break;
+    case "research": body = <ResearchView instrument={instrument} nav={nav} onPick={() => openPalette((i) => go("research", i))} onOpenConversation={openConversation} />; break;
+    case "journal": body = <JournalView nav={nav} onOpenConversation={openConversation} />; break;
+    case "connections": body = <ConnectionsView isAdmin={isAdmin} onOpen={(v) => go(v)} />; break;
     case "chart": body = <ChartView prefs={prefs} savePrefs={savePrefs} focus={instrument} pick={(cb) => openPalette(cb)} />; break;
     case "watchlists": body = <div className="view"><WatchlistsView nav={nav} /></div>; break;
     case "alerts": body = <AlertsView minPriority={prefs.alert_min_priority} onMinPriority={(n) => savePrefs({ alert_min_priority: n })} onBadges={badges.refresh} />; break;
-    case "copilot": body = <CopilotView config={config} instrument={instrument} askAbout={askAbout} historyWidth={prefs.panel_sizes.chat_history ?? 280} onHistoryWidth={(n) => savePrefs({ panel_sizes: { ...prefs.panel_sizes, chat_history: n } })} onAnalyse={(i) => nav.analysis(i)} />; break;
+    case "copilot": body = <CopilotView config={config} instrument={instrument} askAbout={askAbout} openId={route.query.get("conversation")} historyWidth={prefs.panel_sizes.chat_history ?? 280} onHistoryWidth={(n) => savePrefs({ panel_sizes: { ...prefs.panel_sizes, chat_history: n } })} onAnalyse={(i) => nav.analysis(i)} />; break;
     case "notifications": body = <NotificationsView onBadges={badges.refresh} onOpenAlerts={() => go("alerts")} />; break;
     case "profile": body = <ProfileView onProfile={setProfile} />; break;
     case "settings": body = <div className="view"><SettingsView username={user.username} config={config} preferences={prefs} onPreferences={setPrefs} onLogout={onLogout} /></div>; break;

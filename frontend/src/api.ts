@@ -127,7 +127,7 @@ export interface ContractCheck {
 
 // --- preferences ------------------------------------------------------------------
 export type ViewId = "dashboard" | "market" | "scanner" | "watchlists" | "chart" | "analysis" | "positions" | "alerts"
-  | "copilot" | "notifications" | "profile" | "settings" | "account" | "admin";
+  | "copilot" | "notifications" | "profile" | "settings" | "account" | "admin" | "research" | "journal" | "connections";
 export type Indicator = "volume" | "sma20" | "sma50" | "ema20" | "vwap" | "levels";
 export interface Preferences {
   theme: "system" | "light" | "dark";
@@ -145,6 +145,7 @@ export interface Preferences {
   chart_levels: Record<string, number[]>;
   chart_panes: { exchange: string; symbol: string; interval: CandleInterval }[];
   last_instrument: { exchange: string; symbol: string } | null;
+  onboarding_dismissed?: boolean;
   notify_watchlist_alerts: boolean;
   browser_notifications: boolean;
   quiet_hours: { enabled: boolean; start: string; end: string };

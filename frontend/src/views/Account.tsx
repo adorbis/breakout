@@ -2,7 +2,7 @@
 // integration-health panel.
 import { useMemo, useState, type FC, type FormEvent } from "react";
 import { api, ApiError, type AccountInfo, type AdminIntegrations, type AdminUser, type AlertItem, type AlertsStatus, type NotificationItem, type Profile } from "../api.ts";
-import { Empty, Modal, Panel, Provenance, Slider, StateChip, Tone, ago, fmtWhen, useLoad, useToast } from "../ui.tsx";
+import { Empty, Modal, Panel, Pending, Provenance, Slider, StateChip, Tone, ago, fmtWhen, useLoad, useToast } from "../ui.tsx";
 import { EnginesTable } from "./Intel.tsx";
 
 const PRIORITY = ["", "min", "low", "default", "high", "urgent"];
@@ -91,7 +91,8 @@ export const AlertsView: FC<{ minPriority: number; onMinPriority: (n: number) =>
 };
 
 export const NotificationsView: FC<{ onBadges: () => void; onOpenAlerts: () => void }> = ({ onBadges, onOpenAlerts }) => {
-  const { data, refresh } = useLoad<{ notifications: NotificationItem[] }>(api.notifications, 60);
+  const notes = useLoad<{ notifications: NotificationItem[] }>(api.notifications, 60);
+  const { data, refresh } = notes;
   const toast = useToast();
   const act = async (f: () => Promise<unknown>) => { try { await f(); await refresh(); onBadges(); } catch (e) { toast(e instanceof ApiError ? e.message : "Failed.", "err"); } };
   const list = data?.notifications ?? [];
@@ -99,7 +100,7 @@ export const NotificationsView: FC<{ onBadges: () => void; onOpenAlerts: () => v
     <div className="view">
       <Panel title="Notifications" sub="Breakout notifications — for example, when a TradeOS alert mentions a symbol on your watchlists."
         actions={<button className="btn btn-sm" disabled={!list.some((n) => !n.read_at)} onClick={() => act(() => api.readNotifications("all"))}>Mark all read</button>}>
-        {!data ? <div className="loading-inline">Loading…</div> : list.length === 0 ? <Empty title="No notifications" /> : (
+        {!data ? <Pending r={notes} what="Notifications" /> : list.length === 0 ? <Empty title="No notifications" /> : (
           <ul className="notif-list">
             {list.map((n) => (
               <li key={n.id} className={n.read_at ? "read" : "unread"}>
@@ -227,12 +228,12 @@ export const AdminView: FC = () => {
         </table></div>}
       </Panel>
       <Panel title="Users">
-        {!users.data ? <div className="loading-inline">Loading…</div> : <table className="data compact"><thead><tr><th>User</th><th>Role</th><th>Status</th><th>Since</th></tr></thead>
+        {!users.data ? <Pending r={users} what="Users" /> : <table className="data compact"><thead><tr><th>User</th><th>Role</th><th>Status</th><th>Since</th></tr></thead>
           <tbody>{users.data.users.map((u) => <tr key={u.id}><td><b>{u.username}</b>{u.display_name ? ` · ${u.display_name}` : ""}</td><td>{u.role}</td><td>{u.disabled ? "disabled" : "active"}</td><td>{fmtWhen(u.created_at)}</td></tr>)}</tbody></table>}
         <p className="muted small">Roles and account status are changed with the server CLI (<code>cli.ts set-role / disable-user</code>).</p>
       </Panel>
       <Panel title="Contact requests">
-        {!contacts.data ? <div className="loading-inline">Loading…</div> : contacts.data.requests.length === 0 ? <Empty title="None yet" /> :
+        {!contacts.data ? <Pending r={contacts} what="Contact requests" /> : contacts.data.requests.length === 0 ? <Empty title="None yet" /> :
           <ul className="plain">{contacts.data.requests.map((r) => <li key={r.id}><b>{r.name}</b> &lt;{r.email}&gt; · {r.topic} · {ago(r.created_at)}<div className="small">{r.message}</div></li>)}</ul>}
       </Panel>
     </div>

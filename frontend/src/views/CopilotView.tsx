@@ -56,9 +56,11 @@ export const CopilotView: FC<{
   instrument: { exchange: string; symbol: string } | null;
   /** Set when another view asked to "Ask AI" about an instrument; consumed once. */
   askAbout: { exchange: string; symbol: string; nonce: number } | null;
+  /** A conversation to open (deep link from the Journal or Research). */
+  openId?: string | null;
   historyWidth: number; onHistoryWidth: (n: number) => void;
   onAnalyse?: (i: { exchange: string; symbol: string }) => void;
-}> = ({ config, instrument, askAbout, historyWidth, onHistoryWidth, onAnalyse }) => {
+}> = ({ config, instrument, askAbout, openId, historyWidth, onHistoryWidth, onAnalyse }) => {
   const [list, setList] = useState<Conversation[]>([]);
   const [active, setActive] = useState<{ conversation: Conversation; messages: UIMessage[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -85,7 +87,11 @@ export const CopilotView: FC<{
 
   useEffect(() => {
     if (!config) return;
-    refresh().then((convs) => { if (!askAbout) { if (convs[0]) open(convs[0].id); else create().catch(() => {}); } })
+    refresh().then((convs) => {
+      if (askAbout) return;
+      const wanted = openId ? convs.find((c) => c.id === openId) : undefined;
+      if (wanted) open(wanted.id); else if (convs[0]) open(convs[0].id); else create().catch(() => {});
+    })
       .catch((e) => setError(e instanceof Error ? e.message : "Could not load."));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config]);

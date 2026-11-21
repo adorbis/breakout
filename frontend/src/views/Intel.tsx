@@ -5,20 +5,23 @@
 import { Fragment, useMemo, useState, type FC } from "react";
 import {
   api, type BridgeEngines, type BridgeNextCandle, type IntegrationsReport,
-  type SessionClock, type WatchlistRecord, type AlertItem, type ViewId, 
+  type SessionClock, type WatchlistRecord, type AlertItem, type ViewId, type Preferences,
 } from "../api.ts";
 import { PositionsView as V1PositionsView, W7ScoresView } from "../Intelligence.tsx";
 import {
-  Authority, BridgeState, Dropdown, Empty, LabelBadge, Panel, Provenance, Slider, StateChip, Tabs, Tone,
+  Authority, BridgeState, Dropdown, Empty, LabelBadge, Loaded, LoadError, Loading, NotConnected, Panel, Provenance, Slider, StateChip, Tabs, Tone,
   ago, fmtDur, fmtInt, fmtNum, fmtWhen, useContextMenu, useLoad, useMediaQuery, useSessionState, useSort, type MenuItem
 } from "../ui.tsx";
 import { loadScanner, type ScanResult, type ScanRow } from "./feeds.ts";
+import { linkTo } from "../router.ts";
 import { CapabilityPanel } from "./Capabilities.tsx";
 import { SavedAnalysesPanel } from "./SavedAnalyses.tsx";
+import { Onboarding } from "./Onboarding.tsx";
 
 export interface Nav {
   chart: (i: { exchange: string; symbol: string }) => void;
   analysis: (i: { exchange: string; symbol: string }) => void;
+  research: (i: { exchange: string; symbol: string }) => void;
   ask: (i: { exchange: string; symbol: string }) => void;
   addToWatchlist: (i: { exchange: string; symbol: string; instrument_key?: string | null }) => void;
   go: (view: string) => void;
@@ -69,7 +72,7 @@ const UniverseTab: FC<{ nav: Nav }> = ({ nav }) => {
     { label: "Ask AI about this", onSelect: () => nav.ask(inst(i)) },
   ]);
   return (
-    <BridgeState feed={u.data} what="F&O universe">
+    <BridgeState feed={u.data} error={u.error} onRetry={u.refresh} what="F&O universe">
       {(d, f) => (
         <Authority title="Scanned F&O universe" meta={<Provenance parts={["TradeOS", "/scanner/universe", `${d.count} instruments`, d.last_refreshed ? `refreshed ${fmtWhen(d.last_refreshed)}` : "refresh time not provided", `read ${ago(f.fetched_at)}`]} />}>
           <div className="filters">
@@ -277,7 +280,7 @@ export const MarketView: FC<{ refreshSeconds: number; clock: SessionClock | null
         {clock ? <><div className="big">{clock.label}</div><Provenance parts={["Breakout clock", fmtWhen(clock.now_ist)]} />{clock.limitations.map((l) => <p key={l} className="muted small">{l}</p>)}</> : "—"}
       </Panel>
       <Panel title="Regime">
-        <BridgeState feed={engines.data} what="Regime">
+        <BridgeState feed={engines.data} error={engines.error} onRetry={engines.refresh} what="Regime">
           {(d, f) => d.regime ? (
             <Authority title="Market regime" meta={<Provenance parts={["/system/intelligence-health", `read ${ago(f.fetched_at)}`]} />}>
               <div className="big">{d.regime.label ?? "—"} <LabelBadge l={d.regime.status} kind="engine status" /></div>
@@ -288,7 +291,7 @@ export const MarketView: FC<{ refreshSeconds: number; clock: SessionClock | null
         </BridgeState>
       </Panel>
       <Panel title="Market breadth & index" className="span-2" sub="TradeOS's breadth, index and volatility components, as reported.">
-        <BridgeState feed={sentiment.data} what="Breadth">
+        <BridgeState feed={sentiment.data} error={sentiment.error} onRetry={sentiment.refresh} what="Breadth">
           {(d) => {
             const comp = (id: string) => d.components.find((c) => c.id === id);
             const bus = health.data?.ecosystem.state === "ok" ? health.data.ecosystem.data.buses.find((b) => b.name === "market_bus") : undefined;
@@ -312,7 +315,7 @@ export const MarketView: FC<{ refreshSeconds: number; clock: SessionClock | null
         </BridgeState>
       </Panel>
       <Panel title="Market sentiment" className="span-2">
-        <BridgeState feed={sentiment.data} what="Sentiment">
+        <BridgeState feed={sentiment.data} error={sentiment.error} onRetry={sentiment.refresh} what="Sentiment">
           {(d, f) => (
             <Authority title="Sentiment composite" meta={<Provenance parts={["/market/sentiment", d.as_of ? `data time ${fmtWhen(d.as_of)}` : "no data time", d.age_seconds !== null ? `${fmtDur(d.age_seconds)} old` : null, `read ${ago(f.fetched_at)}`]} />}>
               <div className="big"><LabelBadge l={d.verdict} kind="sentiment verdict" /> <span className="muted">score {fmtNum(d.score)}</span></div>
@@ -329,7 +332,7 @@ export const MarketView: FC<{ refreshSeconds: number; clock: SessionClock | null
         </BridgeState>
       </Panel>
       <Panel title="Intelligence engines" className="span-2" sub="Each engine's own status, as TradeOS reports it.">
-        <BridgeState feed={engines.data} what="Engines">
+        <BridgeState feed={engines.data} error={engines.error} onRetry={engines.refresh} what="Engines">
           {(d, f) => <>
             <Provenance parts={["TradeOS", "/system/intelligence-health", `overall "${d.overall}"`, d.checked_at_ist ? `checked ${d.checked_at_ist}` : null, `read ${ago(f.fetched_at)}`]} />
             <EnginesTable d={d} />
@@ -338,7 +341,7 @@ export const MarketView: FC<{ refreshSeconds: number; clock: SessionClock | null
         </BridgeState>
       </Panel>
       <Panel title="Data buses (freshness)" className="span-2" sub="Age versus each bus's own TradeOS freshness contract.">
-        {!health.data ? <div className="loading-inline">Loading…</div> : (
+        {!health.data ? (health.error ? <LoadError what="Platform health" error={health.error} onRetry={health.refresh} /> : <Loading what="platform health" />) : (
           <BridgeState feed={health.data.ecosystem} what="Platform health">
             {(d) => <div className="table-wrap"><table className="data">
               <thead><tr><th>Bus</th><th className="num">Age</th><th className="num">Contract</th><th>State</th></tr></thead>
@@ -357,6 +360,8 @@ export const MarketView: FC<{ refreshSeconds: number; clock: SessionClock | null
 export const PositionsPage: FC<{ refreshSeconds: number }> = ({ refreshSeconds }) => {
   const v1 = useLoad(api.positions, refreshSeconds || 0);
   const wf = useLoad(api.bridgeWf08, refreshSeconds || 0);
+  const integ = useLoad<IntegrationsReport>(api.integrations, 60);
+  const portfolio = integ.data?.entries.find((e) => e.id === "portfolio");
   const v1ok = v1.data?.state === "ok";
   return (
     <div className="view">
@@ -364,7 +369,7 @@ export const PositionsPage: FC<{ refreshSeconds: number }> = ({ refreshSeconds }
         <Panel title="Position monitoring (WF-08)" sub="TradeOS WF-08 watchdog state. Breakout never re-derives coverage, exit levels or triggers."
           actions={<button className="btn btn-sm" onClick={() => { v1.refresh(); wf.refresh(); }}>Refresh</button>}>
           {v1.data && v1.data.state !== "ok" && <p className="muted small">Contract v1 positions feed: {v1.data.reason}</p>}
-          <BridgeState feed={wf.data} what="WF-08 monitoring">
+          <BridgeState feed={wf.data} error={wf.error} onRetry={wf.refresh} what="WF-08 monitoring">
             {(d, f) => (
               <Authority title="WF-08 watchdog" meta={<Provenance parts={["engines.watchdog of /system/intelligence-health", `read ${ago(f.fetched_at)}`, d.last_attempt_at ? `last cycle ${fmtWhen(d.last_attempt_at)}` : null]} />}>
                 <div className="kv">
@@ -379,8 +384,8 @@ export const PositionsPage: FC<{ refreshSeconds: number }> = ({ refreshSeconds }
                 {d.note && <p className="small">{d.note}</p>}
                 {d.books_failed.length > 0 && (<>
                   <h3>Broker books WF-08 could not read</h3>
-                  <table className="data"><thead><tr><th>Broker</th><th>Account</th><th>Book</th><th>Reason (TradeOS)</th></tr></thead>
-                    <tbody>{d.books_failed.map((b, i) => <tr key={i}><td>{b.broker_id}</td><td>{b.account_id}</td><td>{b.book ?? "—"}</td><td className="detail-cell">{b.reason}</td></tr>)}</tbody></table>
+                  <div className="table-wrap"><table className="data"><thead><tr><th>Broker</th><th>Account</th><th>Book</th><th>Reason (TradeOS)</th></tr></thead>
+                    <tbody>{d.books_failed.map((b, i) => <tr key={i}><td>{b.broker_id}</td><td>{b.account_id}</td><td>{b.book ?? "—"}</td><td className="detail-cell">{b.reason}</td></tr>)}</tbody></table></div>
                 </>)}
                 {d.not_evaluated.length > 0 && (<>
                   <h3>Positions not evaluated</h3>
@@ -390,7 +395,11 @@ export const PositionsPage: FC<{ refreshSeconds: number }> = ({ refreshSeconds }
               </Authority>
             )}
           </BridgeState>
-          <Empty title="Portfolio Stream: not implemented in TradeOS">Breakout shows positions only through WF-08 monitoring until TradeOS provides a portfolio feed.</Empty>
+          <section className="ws-group">
+            <h3>Portfolio and P&L {portfolio && <StateChip state={portfolio.state} />}</h3>
+            <p className="small">{portfolio?.detail ?? "Checking the Portfolio Stream…"}</p>
+            <p className="muted small">Breakout shows positions only through WF-08 monitoring until TradeOS provides a portfolio feed. It does not read broker books itself or compute P&L. <a href="/app/connections" onClick={linkTo("/app/connections")}>View connections</a></p>
+          </section>
         </Panel>
       )}
     </div>
@@ -428,7 +437,8 @@ export const NextCandleCard: FC<{ n: BridgeNextCandle; fetched: string }> = ({ n
 );
 
 // --- dashboard -----------------------------------------------------------------------------------
-export const DashboardView: FC<{ nav: Nav; clock: SessionClock | null; refreshSeconds: number; displayName: string }> = ({ nav, clock, refreshSeconds, displayName }) => {
+export const DashboardView: FC<{ nav: Nav; clock: SessionClock | null; refreshSeconds: number; displayName: string;
+  prefs: Preferences; savePrefs: (p: Partial<Preferences>) => void; onPick: () => void }> = ({ nav, clock, refreshSeconds, displayName, prefs, savePrefs, onPick }) => {
   const integ = useLoad<IntegrationsReport>(api.integrations, 60);
   const scan = useLoad(loadScanner, refreshSeconds || 0);
   const sentiment = useLoad(api.bridgeSentiment, refreshSeconds || 0);
@@ -443,39 +453,40 @@ export const DashboardView: FC<{ nav: Nav; clock: SessionClock | null; refreshSe
           <div><span className="k">Session</span>{clock?.label ?? "—"}</div>
           <div><span className="k">IST</span>{clock ? fmtWhen(clock.now_ist) : "—"}</div>
           {integ.data && <div><span className="k">Integrations</span>{integ.data.summary.connected} connected · {integ.data.summary.degraded_or_stale} degraded/stale · {integ.data.summary.pending} pending · {integ.data.summary.unavailable_or_off} off
-            <button className="btn btn-sm" onClick={() => nav.go("settings")}>Details</button></div>}
+            <button className="btn btn-sm" onClick={() => nav.go("connections")}>Connections</button></div>}
         </div>
       </Panel>
+      {!prefs.onboarding_dismissed && <Onboarding prefs={prefs} savePrefs={savePrefs} nav={nav} onPick={onPick} />}
       <CapabilityPanel className="span-2" compact onOpen={(v) => nav.go(v)} refreshSeconds={refreshSeconds || 60} />
       <SavedAnalysesPanel title="Recent saved analyses" limit={5} onOpen={(i) => nav.analysis(i)} />
       <Panel title="Scanner snapshot" actions={<button className="btn btn-sm" onClick={() => nav.go("scanner")}>Open scanner</button>}>
-        {!scan.data ? <div className="loading-inline">Loading…</div> : scan.data.kind === "none" ? <Empty title="Scanner not connected">{scan.data.reasons[1]}</Empty>
-          : scan.data.window === "no_live_scan" ? <Empty title="No live scan in the 30-minute window">{scan.data.kind === "bridge" && scan.data.last_scan_ist ? `Last scan ${scan.data.last_scan_ist} IST (date not provided).` : ""} Not a "no signals" decision.</Empty>
+        <Loaded r={scan} what="Scanner">{(sd) => sd.kind === "none" ? <NotConnected what="Scanner">{sd.reasons[1]}</NotConnected>
+          : sd.window === "no_live_scan" ? <Empty title="No live scan in the 30-minute window">{sd.kind === "bridge" && sd.last_scan_ist ? `Last scan ${sd.last_scan_ist} IST (date not provided).` : ""} Not a "no signals" decision.</Empty>
           : <table className="data compact"><tbody>{top.map((r) => (
-            <tr key={r.instrument_key + r.direction.value} onClick={() => nav.analysis(r)} className="clickable" title="Open instrument analysis"><td><b>{r.symbol}</b></td><td><LabelBadge l={r.direction} /></td><td><LabelBadge l={r.verdict} /></td><td className="num">{fmtInt(r.opportunity_score)}</td></tr>))}</tbody></table>}
+            <tr key={r.instrument_key + r.direction.value} onClick={() => nav.analysis(r)} className="clickable" title="Open instrument analysis"><td><b>{r.symbol}</b></td><td><LabelBadge l={r.direction} /></td><td><LabelBadge l={r.verdict} /></td><td className="num">{fmtInt(r.opportunity_score)}</td></tr>))}</tbody></table>}</Loaded>
       </Panel>
       <Panel title="Market sentiment" actions={<button className="btn btn-sm" onClick={() => nav.go("market")}>Market overview</button>}>
-        <BridgeState feed={sentiment.data} what="Sentiment">
+        <BridgeState feed={sentiment.data} error={sentiment.error} onRetry={sentiment.refresh} what="Sentiment">
           {(d) => <><div className="big"><LabelBadge l={d.verdict} kind="sentiment verdict" /></div><Provenance parts={["TradeOS", "/market/sentiment", d.as_of ? fmtWhen(d.as_of) : null]} /></>}
         </BridgeState>
       </Panel>
       <Panel title="Position monitoring" actions={<button className="btn btn-sm" onClick={() => nav.go("positions")}>Positions</button>}>
-        <BridgeState feed={wf.data} what="WF-08">
+        <BridgeState feed={wf.data} error={wf.error} onRetry={wf.refresh} what="WF-08">
           {(d) => <div className="kv"><div><span className="k">Service</span><LabelBadge l={d.service} /></div><div><span className="k">Coverage</span><LabelBadge l={d.coverage} /></div>
             {d.cycle_status && <div><span className="k">Last cycle</span><code>{d.cycle_status}</code></div>}
             {d.books_failed.length > 0 && <div><span className="k">Unreadable books</span>{d.books_failed.length}</div>}</div>}
         </BridgeState>
       </Panel>
       <Panel title="Latest alerts" actions={<button className="btn btn-sm" onClick={() => nav.go("alerts")}>Alerts centre</button>}>
-        {!alerts.data ? <div className="loading-inline">Loading…</div> : alerts.data.alerts.length === 0 ? <Empty title="No alerts received">See the alerts centre for the subscription state.</Empty>
-          : <ul className="alert-mini">{alerts.data.alerts.slice(0, 5).map((a) => <li key={a.id} className={a.acknowledged_at ? "muted" : ""}><b>{a.title ?? a.message.slice(0, 60)}</b> <span className="muted small">{ago(a.event_time)}</span></li>)}</ul>}
+        <Loaded r={alerts} what="Alerts">{(ad) => ad.alerts.length === 0 ? <Empty title="No alerts received">See the alerts centre for the subscription state.</Empty>
+          : <ul className="alert-mini">{ad.alerts.slice(0, 5).map((a) => <li key={a.id} className={a.acknowledged_at ? "muted" : ""}><b>{a.title ?? a.message.slice(0, 60)}</b> <span className="muted small">{ago(a.event_time)}</span></li>)}</ul>}</Loaded>
       </Panel>
       <Panel title="My watchlists" actions={<button className="btn btn-sm" onClick={() => nav.go("watchlists")}>Manage</button>}>
-        {!lists.data ? <div className="loading-inline">Loading…</div> : lists.data.watchlists.length === 0 ? <Empty title="No watchlists yet"><button className="btn btn-sm btn-primary" onClick={() => nav.go("watchlists")}>Create one</button></Empty>
-          : <ul className="plain">{lists.data.watchlists.map((l) => <li key={l.id}><b>{l.name}</b> <span className="muted">{l.items.length} symbols</span> {l.items.slice(0, 6).map((i) => <button key={i.id} className="chip-btn" onClick={() => nav.chart(i)}>{i.symbol}</button>)}</li>)}</ul>}
+        <Loaded r={lists} what="Watchlists">{(ld) => ld.watchlists.length === 0 ? <Empty title="No watchlists yet"><button className="btn btn-sm btn-primary" onClick={() => nav.go("watchlists")}>Create one</button></Empty>
+          : <ul className="plain">{ld.watchlists.map((l) => <li key={l.id}><b>{l.name}</b> <span className="muted">{l.items.length} symbols</span> {l.items.slice(0, 6).map((i) => <button key={i.id} className="chip-btn" onClick={() => nav.chart(i)}>{i.symbol}</button>)}</li>)}</ul>}</Loaded>
       </Panel>
       {integ.data && (
-        <Panel title="Integration status" className="span-2">
+        <Panel title="Integration status" className="span-2" actions={<button className="btn btn-sm" onClick={() => nav.go("connections")}>Connections</button>}>
           <div className="chip-grid">{integ.data.entries.map((e) => <div key={e.id} className="chip-cell" title={e.detail ?? ""}><span>{e.label}</span><StateChip state={e.state} mode={e.mode} /></div>)}</div>
         </Panel>
       )}
