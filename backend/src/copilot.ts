@@ -113,7 +113,7 @@ export async function buildEvidence(
     else if (quote === "timeout") { partial = true; items.push({ id: "quote", label: "Quote", state: "unavailable", text: "The market-data adapter did not answer within the time budget.", source: "openalgo", as_of: null }); }
     else if (quote && quote.state === "ok") {
       const q = quote.data;
-      const ds = quoteState(ctx.exchange, new Date(now()));
+      const ds = quoteState(ctx.exchange, new Date(now()), { volume: q.volume });
       const state: EvidenceState = q.ltp === null ? "unavailable" : ds.state === "live" ? "available" : ds.state === "closed" ? "idle" : "stale";
       const price = `LTP ${q.ltp}${q.prev_close !== null ? `, previous close ${q.prev_close}` : ""}${q.high !== null && q.low !== null ? `, day range ${q.low}–${q.high}` : ""}`;
       items.push({ id: "quote", label: "Quote", state,

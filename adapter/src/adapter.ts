@@ -21,6 +21,8 @@ export const OUTBOUND_PATHS = ["/api/v1/quotes", "/api/v1/history", "/api/v1/sym
 type Outbound = (typeof OUTBOUND_PATHS)[number];
 
 export const VALID_EXCHANGES = ["NSE", "BSE", "NFO", "BFO", "CDS", "BCD", "MCX", "NCDEX", "NSE_INDEX", "BSE_INDEX"] as const;
+// OpenAlgo 2.0.0.2 ExpirySchema accepts only these (restx_api/data_schemas.py; CRYPTO is out of scope).
+export const EXPIRY_EXCHANGES = ["NFO", "BFO", "MCX", "CDS"] as const;
 const INTERVAL_MAP = { "1minute": "1m", "5minute": "5m", "15minute": "15m", "30minute": "30m", "60minute": "1h", day: "D" } as const;
 type Interval = keyof typeof INTERVAL_MAP;
 const SYMBOL = /^[A-Z0-9][A-Z0-9&_.-]{0,39}$/;
@@ -114,10 +116,14 @@ export function createAdapter(cfg: AdapterConfig) {
     const r = await upstream("/api/v1/quotes", { exchange: p.exchange, symbol: p.symbol });
     if (!r.ok) return r;
     const d = (r.data ?? {}) as Record<string, unknown>;
+    // OpenAlgo broker modules (Upstox included) send 0 for a price they do not
+    // have. A price of 0 is never real, so it becomes null ("no price"), not 0.
+    const px = (v: unknown) => { const x = n(v); return x !== null && x > 0 ? x : null; };
+    const vol = n(d.volume);
     return { ok: true as const, body: {
       source: "openalgo", as_of: new Date(now()).toISOString(), exchange: p.exchange, symbol: p.symbol,
-      ltp: n(d.ltp), open: n(d.open), high: n(d.high), low: n(d.low), prev_close: n(d.prev_close),
-      volume: n(d.volume), bid: n(d.bid), ask: n(d.ask),
+      ltp: px(d.ltp), open: px(d.open), high: px(d.high), low: px(d.low), prev_close: px(d.prev_close),
+      volume: vol !== null && vol >= 0 ? vol : null, bid: px(d.bid), ask: px(d.ask),
     } };
   }
 
@@ -212,6 +218,7 @@ export function createAdapter(cfg: AdapterConfig) {
     } else if (route === "/v1/expiry") {
       const kind = String(p.kind ?? "futures");
       if (kind !== "futures" && kind !== "options") return error(res, 400, "bad_request", "kind must be futures or options.");
+      if (!(EXPIRY_EXCHANGES as readonly string[]).includes(exchange)) return error(res, 400, "bad_request", `Expiries exist only on ${EXPIRY_EXCHANGES.join(", ")}.`);
       r = await expiries({ exchange, symbol, kind });
     } else {
       const interval = String(p.interval ?? "") as Interval;

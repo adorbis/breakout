@@ -167,3 +167,25 @@ test("A12 expiry: futures dates passed through in OpenAlgo order, malformed entr
   assert.equal(calls.at(-1)!.body.instrumenttype, "futures");
   assert.equal((await signed("/v1/expiry", { exchange: "NFO", symbol: "SBIN", kind: "orders" })).status, 400);
 });
+
+test("A13 quote: OpenAlgo's 0 placeholder for a missing price becomes null; zero volume stays 0", async () => {
+  // A fresh adapter: A8 has used up the shared instance's /v1/quote budget.
+  const reply = { status: "success", data: { ltp: 0, open: 0, high: 0, low: 0, prev_close: 803.1, volume: 0, bid: 0, ask: 0, oi: 0 } };
+  const a = createAdapter({ openalgoBaseUrl: "http://openalgo.mock", openalgoApiKey: APIKEY, hmacKey: HMAC, audit: () => {},
+    fetchImpl: async () => new Response(JSON.stringify(reply), { status: 200, headers: { "content-type": "application/json" } }) });
+  const srv = createServer((req, res) => { a.handle(req, res); });
+  await new Promise<void>((ok) => srv.listen(0, "127.0.0.1", ok));
+  const saved = base; base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  let body: any;
+  try { body = await (await signed("/v1/quote", { exchange: "NSE", symbol: "SBIN" })).json(); }
+  finally { base = saved; await new Promise<void>((ok) => srv.close(() => ok())); }
+  assert.equal(body.ltp, null); assert.equal(body.open, null); assert.equal(body.bid, null);
+  assert.equal(body.prev_close, 803.1);
+  assert.equal(body.volume, 0);
+});
+
+test("A14 expiry is refused for exchanges OpenAlgo has no expiries for, without an upstream call", async () => {
+  const r = await signed("/v1/expiry", { exchange: "NSE", symbol: "SBIN", kind: "futures" });
+  assert.equal(r.status, 400);
+  assert.equal(calls.length, 0);
+});

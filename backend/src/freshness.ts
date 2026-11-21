@@ -37,14 +37,27 @@ export function unavailableState(reason: string): DataState {
   return { state: "unavailable", label: "UNAVAILABLE", detail: reason, last_bar_at: null, lag_seconds: null };
 }
 
-export function quoteState(exchange: string, now: Date = new Date()): DataState {
+/** Indices report no traded volume, so zero volume says nothing about their freshness. */
+const INDEX_EXCHANGES = new Set(["NSE_INDEX", "BSE_INDEX"]);
+
+/**
+ * `volume` is the session's traded volume from the same quote. With no tick
+ * time, it is the only in-band freshness evidence: during the session, a
+ * tradable instrument with no volume today has not traded today, so its price
+ * is an earlier session's and is never called live.
+ */
+export function quoteState(exchange: string, now: Date = new Date(), q: { volume?: number | null } = {}): DataState {
   if (!EQUITY_SESSION.has(exchange)) {
     return { state: "delayed", label: "DELAYED?", detail: `Session hours for ${exchange} are not modelled, so this price cannot be confirmed as live.`, last_bar_at: null, lag_seconds: null };
   }
   const clock = sessionClock(now);
-  return sessionOpen(clock)
-    ? { state: "live", label: "LIVE", detail: "Fetched just now during the NSE session. OpenAlgo quotes carry no tick time.", last_bar_at: null, lag_seconds: null }
-    : { state: "closed", label: "MARKET CLOSED", detail: `${clock.label}: this is the last traded price from the most recent session.`, last_bar_at: null, lag_seconds: null };
+  if (!sessionOpen(clock)) {
+    return { state: "closed", label: "MARKET CLOSED", detail: `${clock.label}: this is the last traded price from the most recent session.`, last_bar_at: null, lag_seconds: null };
+  }
+  if (!INDEX_EXCHANGES.has(exchange) && "volume" in q && !(typeof q.volume === "number" && q.volume > 0)) {
+    return { state: "delayed", label: "DELAYED", detail: "The session is open but no volume has traded today, so this price is from an earlier session (or today is an exchange holiday).", last_bar_at: null, lag_seconds: null };
+  }
+  return { state: "live", label: "LIVE", detail: "Fetched just now during the NSE session. OpenAlgo quotes carry no tick time.", last_bar_at: null, lag_seconds: null };
 }
 
 /**

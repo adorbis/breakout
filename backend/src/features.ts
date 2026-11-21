@@ -211,7 +211,7 @@ export function mountFeatures(api: Hono<AppEnv>, deps: {
     const symbol = (c.req.query("symbol") ?? "").toUpperCase();
     if (!symbol || !(EXCHANGES as readonly string[]).includes(exchange)) return c.json(err("bad_request", "exchange and symbol are required."), 400);
     const r = await marketdata.quote(c.get("user").id, { exchange, symbol });
-    return c.json({ ...r, data_state: r.state === "ok" ? quoteState(exchange) : unavailableState(r.reason) }, r.state === "ok" ? 200 : 503);
+    return c.json({ ...r, data_state: r.state === "ok" ? quoteState(exchange, new Date(), { volume: r.data.volume }) : unavailableState(r.reason) }, r.state === "ok" ? 200 : 503);
   });
   // --- saved analyses: a dated, server-assembled snapshot of the workspace -----------
   const SaveBody = z.object({

@@ -27,7 +27,7 @@ const HMAC = "chain-hmac-key-0123456789abcdef0123456789";
 const OA_KEY = "mock-openalgo-key-0123456789";
 let dir: string, store: Store, adapterServer: Server, adapterUrl: string;
 const upstreamPaths: string[] = [];
-let mode: "ok" | "badkey" | "nomaster" = "ok";
+let mode: "ok" | "badkey" | "nomaster" | "zeroquote" = "ok";
 
 // Mock OpenAlgo: only the read routes the adapter is allowed to call.
 const openalgo: typeof fetch = async (input, init) => {
@@ -37,6 +37,7 @@ const openalgo: typeof fetch = async (input, init) => {
   const reply = (status: number, b: unknown) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
   if (mode === "badkey" || body.apikey !== OA_KEY) return reply(403, { status: "error", message: "Invalid openalgo apikey" });
   if (path === "/api/v1/ping") return reply(200, { status: "success", data: { message: "pong", broker: "upstox" } });
+  if (path === "/api/v1/quotes" && mode === "zeroquote") return reply(200, { status: "success", data: { ltp: 0, open: 0, high: 0, low: 0, prev_close: 0, volume: 0, bid: 0, ask: 0, oi: 0 } });
   if (path === "/api/v1/quotes") return reply(200, { status: "success", data: { ltp: 812.4, open: 805, high: 815, low: 801.2, prev_close: 803.1, volume: 1234567, bid: 812.3, ask: 812.5 } });
   if (path === "/api/v1/history") {
     const t0 = 1763000000; // fixed, old bars: outside a live session they are "closed", inside "delayed"
@@ -197,4 +198,36 @@ test("M7 Copilot evidence includes market structure from real candles, labelled 
   assert.match(s.text, /^MARKET CLOSED: Last close/);
   assert.match(s.text, /not a TradeOS signal/);
   assert.equal(s.source, "openalgo candles");
+});
+
+test("M8 OpenAlgo's zero-price placeholder is never shown as a quote; a failed configured source is UNAVAILABLE, not demo", async () => {
+  const { app } = makeApp();
+  const c = await login(app);
+  mode = "zeroquote";
+  try {
+    const q = await call(app, "/instruments/quote?exchange=NSE&symbol=SBIN", c);
+    assert.equal(q.status, 503);
+    assert.equal(q.body.state, "unavailable");
+    assert.equal(q.body.data_state.label, "UNAVAILABLE");
+    assert.match(q.body.reason, /no last traded price/);
+  } finally { mode = "ok"; }
+  mode = "badkey";
+  try {
+    const k = await call(app, "/instruments/candles?exchange=NSE&symbol=SBIN&interval=30minute", c);
+    assert.equal(k.status, 503, "demo mode is on, yet a configured OpenAlgo failure is not replaced by demo candles");
+    assert.equal(k.body.source, "unavailable");
+    assert.equal(k.body.data_state.label, "UNAVAILABLE");
+    assert.ok(!JSON.stringify(k.body).includes(OA_KEY), "the OpenAlgo key never reaches a Breakout response");
+    const q = await call(app, "/instruments/quote?exchange=NSE&symbol=SBIN", c);
+    assert.equal(q.status, 503); assert.equal(q.body.data_state.label, "UNAVAILABLE");
+  } finally { mode = "ok"; }
+});
+
+test("S2 quote state: no volume traded during the session is DELAYED, not LIVE; indices are exempt", () => {
+  const monOpen = new Date("2026-11-16T05:00:00Z"); // 10:30 IST Monday
+  assert.equal(quoteState("NSE", monOpen, { volume: 1200 }).state, "live");
+  assert.equal(quoteState("NSE", monOpen, { volume: 0 }).state, "delayed", "nothing traded today: an earlier session's price");
+  assert.equal(quoteState("NFO", monOpen, { volume: null }).state, "delayed");
+  assert.equal(quoteState("NSE_INDEX", monOpen, { volume: 0 }).state, "live", "indices carry no volume");
+  assert.equal(quoteState("NSE", new Date("2026-11-15T05:00:00Z"), { volume: 0 }).state, "closed");
 });

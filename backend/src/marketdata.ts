@@ -127,7 +127,15 @@ export function createMarketData(cfg: Config, fetchImpl: typeof fetch = fetch): 
       }
       return r;
     },
-    quote: (userId, q) => call(userId, "/v1/quote", { exchange: q.exchange, symbol: q.symbol }, QuoteRes),
+    async quote(userId, q) {
+      const r = await call(userId, "/v1/quote", { exchange: q.exchange, symbol: q.symbol }, QuoteRes);
+      // A quote without a last traded price is not a quote; never show it as one.
+      if (r.state === "ok" && r.data.ltp === null) {
+        st.last_error = "quote without last traded price";
+        return { state: "unavailable", source: "openalgo", reason: `OpenAlgo returned no last traded price for ${q.exchange}:${q.symbol}.` };
+      }
+      return r;
+    },
     symbol: (userId, q) => call(userId, "/v1/symbol", { exchange: q.exchange, symbol: q.symbol }, SymbolRes),
     expiries: (userId, q) => call(userId, "/v1/expiry", { exchange: q.exchange, symbol: q.symbol, kind: q.kind }, ExpiryRes),
     async ping() {
